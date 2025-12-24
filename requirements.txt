@@ -1,0 +1,18 @@
+# 智能媒体资源治理系统 v4.0 依赖项
+
+# 核心依赖
+requests>=2.28.0           # HTTP请求库
+aiohttp>=3.8.0            # 异步HTTP客户端
+pyyaml>=6.0               # YAML配置文件解析
+tenacity>=8.0.0           # 重试机制
+
+# 测试依赖 (可选)
+pytest>=7.0.0             # 单元测试框架
+pytest-asyncio>=0.20.0    # 异步测试支持
+pytest-benchmark>=4.0.0   # 性能测试
+hypothesis>=6.0.0         # 属性测试框架
+
+# 开发依赖 (可选)
+black>=22.0.0             # 代码格式化
+flake8>=5.0.0             # 代码检查
+mypy>=0.991               # 类型检查
