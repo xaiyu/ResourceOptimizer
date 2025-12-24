@@ -12,3 +12,4 @@ config/settings.yaml
 重构文档.md
 main_with_quark_auto_save.py
 tests/
+.kiro/
