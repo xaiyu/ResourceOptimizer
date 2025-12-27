@@ -1,0 +1,4 @@
+# file: C:\Users\72744\Desktop\Code\ResourceOptimizer\core\contracts.py
+# hypothesis_version: 6.148.8
+
+[0.0, 0.5, 3.0, 100, 43200, '1080p', '2160p', '4K', 'Atmos', 'HDR', 'atmos', 'candidates 必须是列表类型', 'episode 不能为负数', 'file_id 不能为空', 'filename 不能为空', 'hdr', 'season 不能为负数', 'size 不能为负数', 'standard_title 不能为空']

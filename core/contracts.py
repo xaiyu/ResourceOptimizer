@@ -113,6 +113,11 @@ class SelectedFile:
     video_meta: VideoMeta     # 解析后的元数据
     selection_reason: str     # 选择原因
     priority: int = 0         # 优先级 (数字越大优先级越高)
+    
+    # v4.1 新增字段
+    target_filename: Optional[str] = None  # 标准化目标文件名
+    rename_metadata: Optional[Dict[str, Any]] = None  # 重命名元数据
+    consistency_score: Optional[float] = None  # 一致性评分 (0.0-1.0)
 
 
 @dataclass
@@ -159,3 +164,50 @@ FileList = List[RawFileNode]
 SourceList = List[RankedSource]
 MetaList = List[VideoMeta]
 SelectedList = List[SelectedFile]
+
+
+@dataclass
+class DynamicFunnelConfig:
+    """
+    [v4.1] 动态漏斗筛选配置
+    """
+    batch_size: int = 3              # 每批检查源数量
+    max_sources: int = 10            # 最大检查源数量
+    stop_multiplier: float = 3.0     # 停止阈值系数 (候选数 > 缺集数 * 此系数)
+    enable_early_stop: bool = True   # 是否启用提前停止
+
+
+@dataclass
+class ConsistencyConfig:
+    """
+    [v4.1] 一致性检查配置
+    """
+    enable: bool = True              # 是否启用一致性检查
+    size_deviation: float = 0.5      # 允许的大小偏差 (0.5 = 50%)
+    min_samples: int = 3             # 最小样本数
+
+
+@dataclass
+class NamingConfig:
+    """
+    [v4.1] 标准化命名配置
+    """
+    enable: bool = True              # 是否启用标准化命名
+    format_template: str = "{title} S{season:02d}E{episode:02d} [{quality}].{ext}"
+    quality_tags: Dict[str, str] = field(default_factory=lambda: {
+        "2160p": "4K",
+        "1080p": "1080p", 
+        "hdr": "HDR",
+        "atmos": "Atmos"
+    })
+
+
+@dataclass
+class SeriesInfo:
+    """
+    [v4.1] 剧集基础信息
+    """
+    title: str                       # 剧集标题
+    season: int                      # 季数
+    total_episodes: int = 0          # 总集数
+    tmdb_id: Optional[int] = None    # TMDB ID

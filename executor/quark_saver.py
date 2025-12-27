@@ -208,7 +208,7 @@ class QuarkSaver:
     
     async def _save_single_file(self, selected_file: SelectedFile, folder_id: str) -> bool:
         """
-        转存单个文件
+        转存单个文件 - v4.1 支持标准化重命名
         
         Args:
             selected_file: 选中的文件
@@ -219,6 +219,14 @@ class QuarkSaver:
         """
         file_node = selected_file.file_node
         
+        # v4.1 检查是否需要重命名
+        target_filename = selected_file.target_filename or file_node.filename
+        needs_rename = (selected_file.target_filename and 
+                       selected_file.target_filename != file_node.filename)
+        
+        if needs_rename:
+            logger.info(f"将重命名文件: {file_node.filename} → {target_filename}")
+        
         # 重试机制
         for attempt in range(self.retry_count):
             try:
@@ -226,9 +234,11 @@ class QuarkSaver:
                 
                 # TODO: 实现实际的转存API调用
                 # 这里需要根据夸克API文档实现文件转存逻辑
-                success = await self._call_save_api(file_node, folder_id)
+                success = await self._call_save_api(file_node, folder_id, target_filename)
                 
                 if success:
+                    if needs_rename:
+                        logger.info(f"转存并重命名成功: {target_filename}")
                     return True
                 
                 # 如果不是最后一次尝试，等待后重试
@@ -244,22 +254,29 @@ class QuarkSaver:
         
         return False
     
-    async def _call_save_api(self, file_node, folder_id: str) -> bool:
+    async def _call_save_api(self, file_node, folder_id: str, target_filename: str = None) -> bool:
         """
-        调用夸克转存API
+        调用夸克转存API - v4.1 支持重命名参数
         
         Args:
             file_node: 文件节点
             folder_id: 目标文件夹ID
+            target_filename: 目标文件名（可选，用于重命名）
             
         Returns:
             API调用是否成功
         """
         # TODO: 实现实际的夸克API调用
         # 这里需要根据夸克API文档构造请求
+        # 如果API支持rename参数，直接在转存时重命名
+        # 否则需要先转存，再调用重命名API
         
         # 模拟API调用
         await asyncio.sleep(0.5)  # 模拟网络延迟
+        
+        # 记录重命名信息
+        if target_filename and target_filename != file_node.filename:
+            logger.debug(f"API调用包含重命名: {file_node.filename} → {target_filename}")
         
         # 模拟成功率 (90%)
         import random

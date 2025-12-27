@@ -66,7 +66,7 @@ class SmartChaseSystem:
     def process_series(self, series_title: str, source_urls: List[str], 
                       target_folder: Optional[str] = None) -> dict:
         """
-        处理单个剧集的完整流程
+        处理单个剧集的完整流程 - v4.1 动态漏斗筛选
         
         Args:
             series_title: 剧集标题
@@ -80,20 +80,35 @@ class SmartChaseSystem:
         logger.info(f"开始处理剧集: {series_title}")
         
         try:
-            # 第一步: 源头竞价 - 选择最优质的源
+            # 预步骤: 快速状态查询 - 获取缺失集数用于动态漏斗筛选
             logger.info("=" * 50)
-            logger.info("第一步: 源头竞价")
+            logger.info("预步骤: 快速状态查询")
+            logger.info("=" * 50)
+            
+            # 快速获取剧集状态以计算缺失集数
+            from io_layer.state_provider import create_state_provider
+            state_provider = create_state_provider()
+            series_state = state_provider.get_series_state(series_title)
+            
+            missing_episodes = len(series_state.tmdb_total_aired) - len(series_state.local_existing)
+            logger.info(f"剧集状态: TMDB {len(series_state.tmdb_total_aired)} 集, "
+                       f"本地 {len(series_state.local_existing)} 集, "
+                       f"缺失 {missing_episodes} 集")
+            
+            # 第一步: 源头竞价 - v4.1 动态漏斗筛选
+            logger.info("\n" + "=" * 50)
+            logger.info("第一步: 源头竞价 (v4.1 动态漏斗筛选)")
             logger.info("=" * 50)
             
             # 将URL列表转换为source_manager期望的格式
             sources_dict = {series_title: [f"源{i+1},{url}" for i, url in enumerate(source_urls)]}
-            ranked_sources = self.source_manager.rank_sources(sources_dict)
+            ranked_sources = self.source_manager.rank_sources(sources_dict, missing_episodes)
             if not ranked_sources:
                 logger.error("没有有效的源链接")
                 return {"success": False, "error": "没有有效的源链接"}
             
             logger.info(f"源头竞价完成: 选择了 {len(ranked_sources)} 个优质源")
-            for i, source in enumerate(ranked_sources[:3], 1):  # 显示前3个
+            for i, source in enumerate(ranked_sources[:5], 1):  # 显示前5个
                 logger.info(f"  {i}. {source.title} (评分: {source.score})")
             
             # 第二步: 上下文构建 - 爬取文件并构建分析上下文
@@ -126,9 +141,9 @@ class SmartChaseSystem:
             logger.info(f"LLM解析完成: {len(parsed_results)} 个文件, "
                        f"{len(valid_results)} 个有效视频")
             
-            # 第四步: 逻辑裁决 - 选择最优文件
+            # 第四步: 逻辑裁决 - v4.1 智能一致性洗码 + 选择最优文件
             logger.info("\n" + "=" * 50)
-            logger.info("第四步: 逻辑裁决")
+            logger.info("第四步: 逻辑裁决 (v4.1 智能一致性洗码)")
             logger.info("=" * 50)
             
             selected_files = self.decision_maker.decide(context, parsed_results)
@@ -147,9 +162,9 @@ class SmartChaseSystem:
                 logger.info(f"  {i}. E{video_meta.episode:02d}: {video_meta.resolution} "
                            f"({video_meta.quality_score}分)")
             
-            # 第五步: 批量转存 - 执行文件转存
+            # 第五步: 批量转存 - v4.1 标准化重命名
             logger.info("\n" + "=" * 50)
-            logger.info("第五步: 批量转存")
+            logger.info("第五步: 批量转存 (v4.1 标准化重命名)")
             logger.info("=" * 50)
             
             if not target_folder:
@@ -166,6 +181,7 @@ class SmartChaseSystem:
             result = {
                 "success": True,
                 "series_title": series_title,
+                "missing_episodes": missing_episodes,
                 "source_count": len(ranked_sources),
                 "candidate_count": len(context.candidates),
                 "parsed_count": len(parsed_results),

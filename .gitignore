@@ -6,10 +6,7 @@ __pycache__/
 1111/
 backup_old_project/
 config/settings.yaml
-技术文档.md
-用户指南.md
-集成方案-quark-auto-save.md
-重构文档.md
+*.md
 main_with_quark_auto_save.py
 tests/
 .kiro/

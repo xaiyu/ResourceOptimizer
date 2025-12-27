@@ -7,6 +7,7 @@ import logging
 from typing import List, Set, Dict, Optional, Tuple
 from collections import defaultdict
 import re
+import time
 
 from core.contracts import AnalysisContext, VideoMeta, SelectedFile, RawFileNode, SeriesState
 from config.config_loader import get_config_value
@@ -39,7 +40,7 @@ class DecisionMaker:
     
     def decide(self, context: AnalysisContext, parsed_results: List[VideoMeta]) -> List[SelectedFile]:
         """
-        主决策函数 - 根据上下文和解析结果选择最优文件
+        主决策函数 - v4.1 智能一致性洗码 + 根据上下文和解析结果选择最优文件
         
         Args:
             context: 分析上下文
@@ -66,8 +67,8 @@ class DecisionMaker:
         episode_groups = self._group_by_episode(file_meta_map, missing_episodes)
         logger.info(f"按集数分组: {len(episode_groups)} 个集数有候选文件")
         
-        # 4. 为每个缺失集数选择最优文件
-        selected_files = []
+        # 4. 为每个缺失集数选择最优文件 (初筛)
+        initial_selections = []
         
         for episode in sorted(missing_episodes):
             if episode in episode_groups:
@@ -85,21 +86,35 @@ class DecisionMaker:
                         priority=video_meta.quality_score
                     )
                     
-                    selected_files.append(selected_file)
-                    logger.info(f"选择集数 {episode}: {file_node.filename[:50]}... "
+                    initial_selections.append(selected_file)
+                    logger.info(f"初选集数 {episode}: {file_node.filename[:50]}... "
                                f"(评分: {video_meta.quality_score})")
                 else:
                     logger.warning(f"集数 {episode} 没有合适的候选文件")
             else:
                 logger.warning(f"集数 {episode} 没有找到候选文件")
         
-        # 5. 检查洗版机会
+        # 5. v4.1 智能一致性洗码 - Size Consistency Check
+        logger.info("\n" + "=" * 30)
+        logger.info("v4.1 智能一致性洗码")
+        logger.info("=" * 30)
+        
+        selected_files = self._enforce_size_consistency(initial_selections)
+        
+        # 5.5. v4.1 标准化重命名 - 生成目标文件名
+        logger.info("\n" + "=" * 30)
+        logger.info("v4.1 标准化重命名")
+        logger.info("=" * 30)
+        
+        selected_files = self._generate_standard_filenames(selected_files, context.standard_title)
+        
+        # 6. 检查洗版机会
         upgrade_files = self._check_upgrade_opportunities(context, file_meta_map)
         if upgrade_files:
             selected_files.extend(upgrade_files)
             logger.info(f"发现 {len(upgrade_files)} 个洗版机会")
         
-        # 6. 按优先级排序并限制数量
+        # 7. 按优先级排序并限制数量
         selected_files.sort(key=lambda x: x.priority, reverse=True)
         if len(selected_files) > self.max_selections:
             selected_files = selected_files[:self.max_selections]
@@ -384,6 +399,204 @@ class DecisionMaker:
                         break  # 每集只选一个最优洗版
         
         return upgrade_files
+    
+    def _enforce_size_consistency(self, initial_selections: List[SelectedFile]) -> List[SelectedFile]:
+        """
+        v4.1 智能一致性洗码 - Size Consistency Check
+        基于统计学（中位数+偏差阈值）剔除离群文件
+        
+        Args:
+            initial_selections: 初步选择的文件列表
+            
+        Returns:
+            经过一致性检查后的文件列表
+        """
+        # 获取一致性配置
+        consistency_enabled = get_config_value("weights.consistency.enable", True)
+        size_deviation = get_config_value("weights.consistency.size_deviation", 0.5)  # 50%偏差
+        min_samples = get_config_value("weights.consistency.min_samples", 3)
+        
+        if not consistency_enabled:
+            logger.info("一致性洗码已禁用，跳过检查")
+            return initial_selections
+        
+        if len(initial_selections) < min_samples:
+            logger.info(f"样本数量不足 ({len(initial_selections)} < {min_samples})，跳过一致性检查")
+            return initial_selections
+        
+        logger.info(f"开始一致性洗码: {len(initial_selections)} 个文件，偏差阈值 {size_deviation*100}%")
+        
+        # 1. 提取文件大小
+        file_sizes = [selected.file_node.size for selected in initial_selections]
+        
+        # 2. 计算中位数
+        sorted_sizes = sorted(file_sizes)
+        n = len(sorted_sizes)
+        if n % 2 == 0:
+            median_size = (sorted_sizes[n//2 - 1] + sorted_sizes[n//2]) / 2
+        else:
+            median_size = sorted_sizes[n//2]
+        
+        logger.info(f"文件大小中位数: {median_size/(1024**3):.2f} GB")
+        
+        # 3. 计算偏差并过滤
+        consistent_files = []
+        outliers = []
+        
+        for selected in initial_selections:
+            file_size = selected.file_node.size
+            deviation = abs(file_size - median_size) / median_size
+            
+            if deviation <= size_deviation:
+                consistent_files.append(selected)
+                logger.debug(f"保留文件: {selected.file_node.filename[:40]}... "
+                           f"({file_size/(1024**3):.2f}GB, 偏差: {deviation:.1%})")
+            else:
+                outliers.append((selected, deviation))
+                logger.warning(f"剔除离群文件: {selected.file_node.filename[:40]}... "
+                             f"({file_size/(1024**3):.2f}GB, 偏差: {deviation:.1%})")
+        
+        # 4. 统计结果
+        logger.info(f"一致性洗码完成: 保留 {len(consistent_files)} 个文件，剔除 {len(outliers)} 个离群文件")
+        
+        if outliers:
+            logger.info("被剔除的离群文件:")
+            for selected, deviation in sorted(outliers, key=lambda x: x[1], reverse=True):
+                file_size_gb = selected.file_node.size / (1024**3)
+                logger.info(f"  - {selected.file_node.filename[:50]}... "
+                           f"({file_size_gb:.2f}GB, 偏差: {deviation:.1%})")
+        
+        # 5. 更新选择原因
+        for selected in consistent_files:
+            if selected.selection_reason:
+                selected.selection_reason += ", 通过一致性检查"
+            else:
+                selected.selection_reason = "通过一致性检查"
+        
+        return consistent_files
+    
+    def _generate_standard_filenames(self, selected_files: List[SelectedFile], 
+                                   series_title: str) -> List[SelectedFile]:
+        """
+        v4.1 标准化重命名 - 生成标准文件名
+        
+        Args:
+            selected_files: 选中的文件列表
+            series_title: 剧集标题
+            
+        Returns:
+            添加了标准文件名的文件列表
+        """
+        # 获取命名配置
+        naming_enabled = get_config_value("weights.naming.enable", True)
+        format_template = get_config_value("weights.naming.format", 
+                                         "{title} S{season:02d}E{episode:02d} [{quality}].{ext}")
+        quality_tags = get_config_value("weights.naming.quality_tags", {
+            "2160p": "4K", "1080p": "1080p", "hdr": "HDR", "atmos": "Atmos"
+        })
+        
+        if not naming_enabled:
+            logger.info("标准化重命名已禁用，跳过处理")
+            return selected_files
+        
+        logger.info(f"开始生成标准文件名: {len(selected_files)} 个文件")
+        
+        for selected in selected_files:
+            try:
+                # 提取原始文件扩展名
+                original_filename = selected.file_node.filename
+                file_ext = original_filename.split('.')[-1] if '.' in original_filename else 'mkv'
+                
+                # 构建质量标签
+                quality_parts = []
+                
+                # 分辨率标签
+                resolution = selected.video_meta.resolution
+                if resolution in quality_tags:
+                    quality_parts.append(quality_tags[resolution])
+                elif resolution:
+                    quality_parts.append(resolution)
+                
+                # 从源上下文中提取额外质量信息
+                source_context = selected.file_node.source_context.lower()
+                for key, tag in quality_tags.items():
+                    if key.lower() in source_context and tag not in quality_parts:
+                        quality_parts.append(tag)
+                
+                # 如果没有质量标签，使用评分
+                if not quality_parts:
+                    score = selected.video_meta.quality_score
+                    if score >= 90:
+                        quality_parts.append("超高清")
+                    elif score >= 80:
+                        quality_parts.append("高清")
+                    else:
+                        quality_parts.append("标清")
+                
+                quality_str = "+".join(quality_parts)
+                
+                # 生成标准文件名
+                standard_filename = format_template.format(
+                    title=series_title,
+                    season=selected.video_meta.season,
+                    episode=selected.video_meta.episode,
+                    quality=quality_str,
+                    ext=file_ext
+                )
+                
+                # 清理文件名中的非法字符
+                standard_filename = self._sanitize_filename(standard_filename)
+                
+                # 设置目标文件名
+                selected.target_filename = standard_filename
+                selected.rename_metadata = {
+                    "original_filename": original_filename,
+                    "quality_tags": quality_parts,
+                    "format_template": format_template,
+                    "generated_at": time.time()
+                }
+                
+                logger.info(f"E{selected.video_meta.episode:02d}: "
+                           f"{original_filename[:30]}... → {standard_filename}")
+                
+            except Exception as e:
+                logger.error(f"生成标准文件名失败: {selected.file_node.filename}, 错误: {e}")
+                # 如果生成失败，保持原文件名
+                selected.target_filename = selected.file_node.filename
+        
+        logger.info("标准化重命名完成")
+        return selected_files
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        清理文件名中的非法字符
+        
+        Args:
+            filename: 原始文件名
+            
+        Returns:
+            清理后的文件名
+        """
+        import re
+        
+        # Windows/Linux 非法字符
+        illegal_chars = r'[<>:"/\\|?*]'
+        
+        # 替换非法字符为下划线
+        sanitized = re.sub(illegal_chars, '_', filename)
+        
+        # 移除多余的空格和点
+        sanitized = re.sub(r'\s+', ' ', sanitized)  # 多个空格变成一个
+        sanitized = re.sub(r'\.+', '.', sanitized)  # 多个点变成一个
+        
+        # 移除首尾空格
+        sanitized = sanitized.strip()
+        
+        # 确保文件名不为空
+        if not sanitized:
+            sanitized = "unnamed_file"
+        
+        return sanitized
     
     def _generate_selection_reason(self, video_meta: VideoMeta, candidate_count: int) -> str:
         """

@@ -52,16 +52,23 @@ class SourceManager:
         
         logger.info(f"源管理器初始化完成，加载了 {len(self.weights)} 个关键词权重")
     
-    def rank_sources(self, sources: Dict[str, List[str]]) -> List[RankedSource]:
+    def rank_sources(self, sources: Dict[str, List[str]], missing_episodes: int = 0) -> List[RankedSource]:
         """
-        对源进行竞价排序
+        对源进行竞价排序 - v4.1 动态漏斗筛选
         
         Args:
             sources: 源字典 {"影视名": ["标题1,链接1", "标题2,链接2", ...]}
+            missing_episodes: 缺失集数，用于动态停止条件
             
         Returns:
-            排序后的源列表，仅保留Top 3
+            排序后的源列表，动态数量（不再限制Top 3）
         """
+        # 获取动态漏斗配置
+        batch_size = get_config_value("app.funnel.batch_size", 3)
+        max_sources = get_config_value("app.funnel.max_sources", 10)
+        stop_multiplier = get_config_value("app.funnel.stop_multiplier", 3.0)
+        enable_early_stop = get_config_value("app.funnel.enable_early_stop", True)
+        
         all_sources = []
         
         # 解析所有源
@@ -109,11 +116,45 @@ class SourceManager:
         # 按分数降序排序
         all_sources.sort(key=lambda x: x[0], reverse=True)
         
-        # 记录被丢弃的低分源
-        total_sources = len(all_sources)
-        kept_sources = min(3, total_sources)
-        discarded_count = total_sources - kept_sources
+        # v4.1 动态漏斗筛选逻辑
+        if enable_early_stop and missing_episodes > 0:
+            # 计算动态停止阈值
+            stop_threshold = int(missing_episodes * stop_multiplier)
+            logger.info(f"动态漏斗筛选: 缺失 {missing_episodes} 集, "
+                       f"目标候选数 {stop_threshold}, 批次大小 {batch_size}")
+            
+            # 分批处理
+            selected_sources = []
+            for batch_start in range(0, min(len(all_sources), max_sources), batch_size):
+                batch_end = min(batch_start + batch_size, len(all_sources), max_sources)
+                batch_sources = all_sources[batch_start:batch_end]
+                
+                logger.info(f"处理批次 {batch_start//batch_size + 1}: "
+                           f"源 {batch_start+1}-{batch_end}")
+                
+                selected_sources.extend(batch_sources)
+                
+                # 检查是否达到停止条件
+                if len(selected_sources) >= stop_threshold:
+                    logger.info(f"达到停止条件: 已选择 {len(selected_sources)} 个源 "
+                               f"(>= {stop_threshold}), 提前结束")
+                    break
+                
+                # 检查是否已处理完所有源
+                if batch_end >= len(all_sources):
+                    logger.info(f"已处理完所有 {len(all_sources)} 个源")
+                    break
+            
+            kept_sources = len(selected_sources)
+            discarded_count = len(all_sources) - kept_sources
+        else:
+            # 传统模式：保留Top 3
+            kept_sources = min(3, len(all_sources))
+            selected_sources = all_sources[:kept_sources]
+            discarded_count = len(all_sources) - kept_sources
+            logger.info("使用传统模式: 保留Top 3源")
         
+        # 记录被丢弃的低分源
         if discarded_count > 0:
             logger.info(f"源头竞价完成: 保留 {kept_sources} 个优质源，丢弃 {discarded_count} 个低分源")
             
@@ -121,9 +162,9 @@ class SourceManager:
             for i, (score, source_info, resource_title) in enumerate(all_sources[kept_sources:], kept_sources + 1):
                 logger.debug(f"丢弃源 #{i}: {source_info.title[:30]}... (评分: {score})")
         
-        # 转换为RankedSource并返回Top 3
+        # 转换为RankedSource并返回
         ranked_sources = []
-        for rank, (score, source_info, resource_title) in enumerate(all_sources[:kept_sources], 1):
+        for rank, (score, source_info, resource_title) in enumerate(selected_sources, 1):
             ranked_source = RankedSource(
                 title=source_info.title,
                 url=source_info.url,

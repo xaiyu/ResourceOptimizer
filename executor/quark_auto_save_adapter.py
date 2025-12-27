@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import asdict
 
-from core.contracts import DecisionResult, FileNode
+from core.contracts import SelectedFile, RawFileNode
 from config.config_loader import get_config_value
 
 import logging
@@ -345,3 +345,118 @@ python quark_auto_save.py
 # 或者使用Docker（如果已配置）：
 docker run -v "{abs_config_path}:/app/config/quark_config.json" cp0204/quark-auto-save:latest
 """
+    
+    def create_enhanced_save_config(self, selected_files: List, series_title: str) -> str:
+        """
+        创建增强的转存配置 (v4.1)
+        支持标准化文件名和重命名元数据
+        
+        Args:
+            selected_files: 选中的文件列表 (SelectedFile对象)
+            series_title: 剧集标题
+            
+        Returns:
+            配置文件路径
+        """
+        try:
+            # 构建增强的任务配置
+            tasks = []
+            
+            for selected_file in selected_files:
+                file_node = selected_file.file_node
+                video_meta = selected_file.video_meta
+                
+                # 使用标准化文件名 (v4.1新功能)
+                target_name = getattr(selected_file, 'target_filename', None) or file_node.filename
+                
+                task = {
+                    "taskname": self._generate_enhanced_task_name(series_title, video_meta),
+                    "shareurl": file_node.share_token,
+                    "savepath": self._generate_enhanced_save_path(series_title, video_meta.season),
+                    "pattern": self._escape_regex(file_node.filename),
+                    "replace": target_name,  # v4.1: 使用标准化文件名进行重命名
+                    "enddate": (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d"),
+                    
+                    # v4.1: 增强元数据
+                    "_enhanced_metadata": {
+                        "version": "v4.1",
+                        "original_filename": file_node.filename,
+                        "target_filename": target_name,
+                        "file_size": file_node.size,
+                        "episode": video_meta.episode,
+                        "quality_score": video_meta.quality_score,
+                        "selection_reason": selected_file.selection_reason,
+                        "consistency_score": getattr(selected_file, 'consistency_score', None),
+                        "rename_metadata": getattr(selected_file, 'rename_metadata', None),
+                        "generated_by": "enhanced_system_v4.1",
+                        "generated_at": datetime.now().isoformat()
+                    }
+                }
+                tasks.append(task)
+            
+            # 生成增强配置文件
+            config = {
+                "version": "v4.1_enhanced",
+                "generated_at": datetime.now().isoformat(),
+                "series_info": {
+                    "title": series_title,
+                    "total_tasks": len(tasks),
+                    "total_files": len(selected_files)
+                },
+                "enhanced_features": {
+                    "standardized_naming": True,
+                    "consistency_checked": True,
+                    "metadata_enriched": True
+                },
+                "tasklist": tasks
+            }
+            
+            # 保存配置文件
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            config_filename = f"enhanced_quark_config_{series_title}_{timestamp}.json"
+            # 清理文件名中的非法字符
+            config_filename = re.sub(r'[<>:"/\\|?*]', '_', config_filename)
+            config_path = self.output_dir / config_filename
+            
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"✅ 增强转存配置已生成: {config_path}")
+            logger.info(f"   任务数: {len(tasks)}")
+            logger.info(f"   文件数: {len(selected_files)}")
+            
+            return str(config_path)
+            
+        except Exception as e:
+            logger.error(f"❌ 生成增强转存配置失败: {e}")
+            raise
+    
+    def _generate_enhanced_task_name(self, series_title: str, video_meta) -> str:
+        """生成增强的任务名称"""
+        name = series_title
+        
+        # 添加季集信息
+        if hasattr(video_meta, 'season') and video_meta.season:
+            name += f" S{video_meta.season:02d}"
+        
+        if hasattr(video_meta, 'episode') and video_meta.episode:
+            name += f"E{video_meta.episode:02d}"
+        
+        # 添加质量标识
+        if hasattr(video_meta, 'resolution') and video_meta.resolution:
+            name += f" [{video_meta.resolution}]"
+        
+        return name
+    
+    def _generate_enhanced_save_path(self, series_title: str, season: int = 1) -> str:
+        """生成增强的保存路径"""
+        base_path = get_config_value("output.base_dir", "/智能追剧")
+        
+        # 构建层级路径：基础路径/电视剧/剧名/季度
+        clean_title = re.sub(r'[<>:"/\\|?*]', '_', series_title)
+        season_folder = f"Season {season:02d}" if season > 1 else ""
+        
+        if season_folder:
+            return f"{base_path}/电视剧/{clean_title}/{season_folder}"
+        else:
+            return f"{base_path}/电视剧/{clean_title}"

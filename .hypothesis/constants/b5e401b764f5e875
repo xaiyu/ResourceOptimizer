@@ -1,0 +1,4 @@
+# file: C:\Users\72744\Desktop\Code\ResourceOptimizer\core\decision_engine.py
+# hypothesis_version: 6.148.8
+
+[0.1, 0.2, 0.3, 0.4, 0.5, 20.0, 40.0, 50.0, 60.0, 80.0, 100.0, 1024, '+', ', ', ', 通过一致性检查', '.', '1080p', '1080p分辨率', '2160p', '4K', '4K分辨率', '4k', '=', 'Atmos', 'HDR', '[<>:"/\\\\|?*]', '\\.+', '\\s+', '_', 'app.max_selections', 'atmos', 'bluray', 'extra', 'format_template', 'frds', 'generated_at', 'group', 'h265', 'hdctv', 'hdr', 'hevc', 'llm', 'max_selections', 'mkv', 'naming', 'original_filename', 'quality_tags', 'quality_threshold', 'remux', 'strategy_weights', 'team', 'unnamed_file', 'upgrade_threshold', 'v4.1 智能一致性洗码', 'v4.1 标准化重命名', 'weight', 'x265', '一致性洗码已禁用，跳过检查', '全景声', '合格质量', '唯一候选', '杜比视界', '标准化重命名完成', '标准化重命名已禁用，跳过处理', '标清', '没有缺失集数，无需下载', '被剔除的离群文件:', '超高清', '超高质量', '通过一致性检查', '高清', '高质量']
