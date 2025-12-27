@@ -118,14 +118,18 @@ class StopConditionEvaluator:
         Returns:
             停止决策
         """
-        if missing_count == 0:
-            return StopDecision(
-                should_stop=True,
-                reason="没有缺失集数",
-                confidence=1.0
-            )
+        # 修复逻辑漏洞：处理 missing_count 为 0 的情况
+        # 在洗版/升级画质场景下，不应该立即停止
+        min_candidates = getattr(self.config, 'min_candidates', 5)  # 默认最小5个候选
         
-        target_candidates = int(missing_count * self.config.candidate_multiplier)
+        if missing_count == 0:
+            # 洗版/升级画质模式：使用最小候选数作为目标
+            target_candidates = min_candidates
+            self.logger.info(f"🔄 洗版/升级画质模式，目标候选数: {target_candidates}")
+        else:
+            # 正常模式：使用缺失集数计算目标
+            raw_target = int(missing_count * self.config.candidate_multiplier)
+            target_candidates = max(raw_target, min_candidates)
         
         if current_candidates >= target_candidates:
             confidence = min(1.0, current_candidates / target_candidates)
@@ -133,7 +137,10 @@ class StopConditionEvaluator:
             self.logger.info(f"🎯 候选数量达到阈值:")
             self.logger.info(f"   当前候选: {current_candidates}")
             self.logger.info(f"   目标候选: {target_candidates}")
-            self.logger.info(f"   覆盖率: {current_candidates/missing_count:.1f}x")
+            if missing_count > 0:
+                self.logger.info(f"   覆盖率: {current_candidates/missing_count:.1f}x")
+            else:
+                self.logger.info(f"   洗版模式覆盖率: {current_candidates}/{target_candidates}")
             
             return StopDecision(
                 should_stop=True,

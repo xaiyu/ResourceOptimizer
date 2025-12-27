@@ -114,7 +114,12 @@ class DynamicFunnelSelector:
         start_time = time.time()
         missing_episodes = series_state.get_missing_episodes()
         missing_count = len(missing_episodes)
-        target_candidates = int(missing_count * self.config.stop_multiplier)
+        
+        # 修复逻辑漏洞：设置最小候选数量保底
+        # 当 missing_count 为 0 时（洗版/升级画质场景），确保至少搜索一定数量的候选文件
+        min_candidates = getattr(self.config, 'min_candidates', 5)  # 默认最小5个候选
+        raw_target = int(missing_count * self.config.stop_multiplier)
+        target_candidates = max(raw_target, min_candidates)
         
         candidate_pool = []
         selected_sources = []
@@ -122,8 +127,14 @@ class DynamicFunnelSelector:
         
         self.logger.info(f"🎯 动态漏斗筛选开始")
         self.logger.info(f"   缺失集数: {missing_count}")
-        self.logger.info(f"   目标候选数: {target_candidates}")
+        self.logger.info(f"   原始目标候选数: {raw_target}")
+        self.logger.info(f"   实际目标候选数: {target_candidates} (最小保底: {min_candidates})")
         self.logger.info(f"   可用源数: {len(sources)}")
+        
+        # 特殊场景提示
+        if missing_count == 0:
+            self.logger.info(f"🔄 检测到洗版/升级画质模式 (缺失集数为0)")
+            self.logger.info(f"   启用最小候选保底机制，确保搜索 {min_candidates} 个候选文件")
         
         # 创建处理上下文
         context = FunnelContext(

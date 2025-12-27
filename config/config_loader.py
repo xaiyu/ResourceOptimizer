@@ -302,6 +302,7 @@ def create_dynamic_funnel_config() -> 'DynamicFunnelConfig':
         candidate_multiplier=funnel_config.get('stop_conditions', {}).get('candidate_multiplier', 3.0),
         quality_threshold_batches=funnel_config.get('stop_conditions', {}).get('quality_threshold_batches', 3),
         score_threshold=funnel_config.get('stop_conditions', {}).get('score_threshold', 60),
+        min_candidates=funnel_config.get('min_candidates', 5),  # 新增最小候选数配置
         enable_early_stop=funnel_config.get('stop_conditions', {}).get('enable_early_stop', True)
     )
     
@@ -309,6 +310,7 @@ def create_dynamic_funnel_config() -> 'DynamicFunnelConfig':
         batch_size=funnel_config.get('batch_size', 3),
         max_sources=funnel_config.get('max_sources', 15),
         stop_multiplier=funnel_config.get('stop_multiplier', 3.0),
+        min_candidates=funnel_config.get('min_candidates', 5),  # 新增最小候选数配置
         enable_early_stop=funnel_config.get('enable_early_stop', True),
         retry_config=retry_config,
         stop_config=stop_config

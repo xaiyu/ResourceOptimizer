@@ -75,6 +75,31 @@ class SmartChaseSystem:
         
         logger.info("所有模块初始化完成")
     
+    @staticmethod
+    def run_async_safely(coro, fallback_result=None):
+        """
+        在同步上下文中安全运行异步代码的静态方法
+        
+        这是一个便捷的静态方法，封装了复杂的事件循环检测逻辑。
+        其他模块可以直接调用此方法来执行异步代码，无需创建 SmartChaseSystem 实例。
+        
+        Args:
+            coro: 要执行的协程对象
+            fallback_result: 执行失败时的默认返回值
+            
+        Returns:
+            协程的执行结果，或失败时的默认值
+            
+        Example:
+            >>> async def fetch_data():
+            ...     return "data"
+            >>> 
+            >>> result = SmartChaseSystem.run_async_safely(fetch_data())
+            >>> print(result)  # "data"
+        """
+        from core.utils import run_async_in_sync_context_safe
+        return run_async_in_sync_context_safe(coro, fallback_result)
+    
     def process_series(self, series_title: str, sources: Dict[str, str], 
                       target_folder: Optional[str] = None) -> dict:
         """
@@ -124,42 +149,14 @@ class SmartChaseSystem:
                 # 保持完整的源信息 (标题+URL) 传递给增强管道
                 # 不再丢弃分享标题，确保评分系统和LLM上下文完整
                 
-                # 使用异步处理, 但在同步上下文中运行
-                import asyncio
+                # 使用工具函数在同步上下文中运行异步代码
+                from core.utils import run_async_in_sync_context
                 
-                # 检查是否已有事件循环
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # 如果已有运行中的事件循环, 创建新任务
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(
-                                asyncio.run,
-                                self.pipeline_orchestrator.process_series_enhanced(
-                                    series_title, sources, target_folder
-                                )
-                            )
-                            result = future.result()
-                    else:
-                        # 没有运行中的事件循环, 直接运行
-                        result = asyncio.run(
-                            self.pipeline_orchestrator.process_series_enhanced(
-                                series_title, sources, target_folder
-                            )
-                        )
-                except RuntimeError:
-                    # 创建新的事件循环
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        result = loop.run_until_complete(
-                            self.pipeline_orchestrator.process_series_enhanced(
-                                series_title, sources, target_folder
-                            )
-                        )
-                    finally:
-                        loop.close()
+                result = run_async_in_sync_context(
+                    self.pipeline_orchestrator.process_series_enhanced(
+                        series_title, sources, target_folder
+                    )
+                )
                 
                 return result
             

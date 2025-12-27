@@ -289,6 +289,7 @@ class StopConditionConfig:
     candidate_multiplier: float = 3.0
     quality_threshold_batches: int = 3
     score_threshold: int = 60
+    min_candidates: int = 5          # 最小候选数量保底 (修复洗版模式漏洞)
     enable_early_stop: bool = True
 
 
@@ -341,6 +342,7 @@ class DynamicFunnelConfig:
     batch_size: int = 3              # 每批检查源数量
     max_sources: int = 15            # 最大检查源数量 (增加到15)
     stop_multiplier: float = 3.0     # 停止阈值系数 (候选数 > 缺集数 * 此系数)
+    min_candidates: int = 5          # 最小候选数量保底 (修复洗版模式漏洞)
     enable_early_stop: bool = True   # 是否启用提前停止
     
     # 新增配置项

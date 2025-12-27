@@ -224,8 +224,8 @@ class PipelineOrchestrator:
             series_state = state_provider.get_state_with_cache(series_title)
             
             # 步骤2: 源头竞价 (保持完整的分享标题信息)
-            # 将 Dict[str, str] 转换为 SourceManager 期望的格式
-            sources_dict = {series_title: [f"{title},{url}" for title, url in sources.items()]}
+            # 使用字典格式避免标题中逗号导致的URL解析错误
+            sources_dict = {series_title: [{"title": title, "url": url} for title, url in sources.items()]}
             ranked_sources = self.source_manager.rank_sources(sources_dict, len(series_state.get_missing_episodes()))
             
             if not ranked_sources:
@@ -353,7 +353,8 @@ class PipelineOrchestrator:
             series_state = state_provider.get_state_with_cache(series_title)
             
             # 源头竞价 (保持完整的分享标题信息)
-            sources_dict = {series_title: [f"{title},{url}" for title, url in sources.items()]}
+            # 使用字典格式避免标题中逗号导致的URL解析错误
+            sources_dict = {series_title: [{"title": title, "url": url} for title, url in sources.items()]}
             ranked_sources = self.source_manager.rank_sources(sources_dict, len(series_state.get_missing_episodes()))
             
             if not ranked_sources:
