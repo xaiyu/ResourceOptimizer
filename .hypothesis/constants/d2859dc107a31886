@@ -1,4 +1,0 @@
-# file: C:\Users\72744\Desktop\Code\ResourceOptimizer\io_layer\source_manager.py
-# hypothesis_version: 6.148.8
-
-[3.0, -100, '(\\d+)天前', ',', '1080p', '2160p', '4K', '60fps', '720p', 'BluRay', 'DTS-HD', 'H265', 'HDR', 'HEVC', 'Remux', 'Trailer', 'TrueHD', 'WEB-DL', 'aliases', 'aliases_count', 'link', 'max_weight', 'min_weight', 'name', 'negative_keywords', 'positive_keywords', 'time', 'title', 'total_keywords', 'url', 'user', '中字', '今天', '使用传统模式: 保留Top 3源', '假4K', '全景声', '内嵌', '删减版', '前天', '广告', '无水印', '昨天', '机翻', '杜比视界', '测试', '纯净', '预告']

@@ -10,3 +10,6 @@ config/settings.yaml
 main_with_quark_auto_save.py
 tests/
 .kiro/
+.kiro
+.vscode
+.hypothesis

@@ -1,4 +1,0 @@
-# file: C:\Users\72744\Desktop\Code\ResourceOptimizer\config\config_loader.py
-# hypothesis_version: 6.148.8
-
-['.', '/', 'SMART_CHASE_CONFIG', 'app', 'cache', 'cache.db_path', 'config/settings.yaml', 'level', 'logging', 'logging.file', 'max_concurrency', 'min_file_size_mb', 'output.base_dir', 'provider', 'quark_cookie', 'r', 'silicon_api_key', 'tmdb_api_key', 'ttl_hours', 'utf-8', 'weights', '配置加载成功', '配置文件为空']
