@@ -5,7 +5,7 @@
 
 import logging
 import re
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Union, Any, Optional
 from dataclasses import dataclass
 
 from core.contracts import RankedSource
@@ -52,12 +52,14 @@ class SourceManager:
         
         logger.info(f"源管理器初始化完成，加载了 {len(self.weights)} 个关键词权重")
     
-    def rank_sources(self, sources: Dict[str, List[str]], missing_episodes: int = 0) -> List[RankedSource]:
+    def rank_sources(self, sources: Union[Dict[str, List[str]], List[Dict[str, str]]], missing_episodes: int = 0) -> List[RankedSource]:
         """
         对源进行竞价排序 - v4.1 动态漏斗筛选
         
         Args:
-            sources: 源字典 {"影视名": ["标题1,链接1", "标题2,链接2", ...]}
+            sources: 源数据，支持两种格式：
+                     1. 字典格式 Dict[str, List[str]] - {"影视名": ["标题1,链接1", "标题2,链接2", ...]}
+                     2. 列表格式 List[Dict[str, str]] - [{"title": "标题", "url": "链接"}, ...]
             missing_episodes: 缺失集数，用于动态停止条件
             
         Returns:
@@ -71,8 +73,14 @@ class SourceManager:
         
         all_sources = []
         
+        # 统一转换为字典格式: {resource_title: [source_items]}
+        if isinstance(sources, list):
+            sources_dict = {"默认资源": sources}
+        else:
+            sources_dict = sources
+        
         # 解析所有源
-        for resource_title, source_list in sources.items():
+        for resource_title, source_list in sources_dict.items():
             logger.info(f"开始处理资源: {resource_title}, 源数量: {len(source_list)}")
             
             for source_str in source_list:

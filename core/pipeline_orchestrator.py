@@ -250,8 +250,11 @@ class PipelineOrchestrator:
                     "funnel_result": funnel_result
                 }
             
-            # 步骤4: LLM解析
-            parsed_results = self.llm_client.parse_files(funnel_result.candidate_files)
+            # 步骤4: LLM解析 (使用官方标题作为基准锚点)
+            parsed_results = self.llm_client.parse_files(
+                funnel_result.candidate_files, 
+                standard_title=series_title
+            )
             
             if not parsed_results:
                 return {
@@ -377,8 +380,11 @@ class PipelineOrchestrator:
                     "mode": "static"
                 }
             
-            # LLM解析
-            parsed_results = self.llm_client.parse_files(context.candidates)
+            # LLM解析 (使用官方标题作为基准锚点)
+            parsed_results = self.llm_client.parse_files(
+                context.candidates, 
+                standard_title=series_title
+            )
             
             if not parsed_results:
                 return {
