@@ -1,6 +1,7 @@
 """
-智能媒体资源治理系统 v4.0 主程序
+智能媒体资源治理系统 v4.1 主程序
 基于Pipeline + Map-Reduce + Context Injection架构
+v4.1 新增: 动态漏斗循环 + 增强组件集成
 """
 
 import logging
@@ -8,7 +9,7 @@ import sys
 import os
 import time
 import argparse
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +21,7 @@ from core.llm_client import create_llm_client
 from core.decision_engine import create_decision_maker
 from executor.quark_saver import create_quark_saver, save_files_sync
 from core.contracts import AnalysisContext, SelectedFile
+from core.pipeline_orchestrator import create_pipeline_orchestrator
 
 # 配置日志
 def setup_logging():
@@ -52,156 +54,118 @@ class SmartChaseSystem:
     
     def __init__(self):
         """初始化系统组件"""
-        logger.info("初始化智能媒体资源治理系统 v4.0")
+        logger.info("初始化智能媒体资源治理系统 v4.1")
         
-        # 初始化各个模块
-        self.source_manager = create_source_manager()
-        self.context_builder = create_context_builder()
-        self.llm_client = create_llm_client()
-        self.decision_maker = create_decision_maker()
-        self.quark_saver = create_quark_saver()
+        # v4.1+ 优先使用管道编排器
+        try:
+            self.pipeline_orchestrator = create_pipeline_orchestrator()
+            self.use_enhanced_pipeline = True
+            logger.info("✅ 管道编排器初始化成功, 启用增强模式")
+        except Exception as e:
+            logger.warning(f"⚠️ 管道编排器初始化失败: {e}")
+            logger.warning("🔄 降级到传统组件模式")
+            self.use_enhanced_pipeline = False
+            
+            # 降级到传统组件初始化
+            self.source_manager = create_source_manager()
+            self.context_builder = create_context_builder()
+            self.llm_client = create_llm_client()
+            self.decision_maker = create_decision_maker()
+            self.quark_saver = create_quark_saver()
         
         logger.info("所有模块初始化完成")
     
-    def process_series(self, series_title: str, source_urls: List[str], 
+    def process_series(self, series_title: str, sources: Dict[str, str], 
                       target_folder: Optional[str] = None) -> dict:
         """
-        处理单个剧集的完整流程 - v4.1 动态漏斗筛选
+        处理单个剧集的完整流程 - v4.1 多源异构标题适配
+        
+        核心功能：
+        1. 接收官方标题和分享标题字典
+        2. 基于分享标题进行源头竞价
+        3. 使用官方标题作为LLM识别基准
+        4. 动态漏斗筛选优化API调用
+        5. 增强决策引擎确保质量一致性
         
         Args:
-            series_title: 剧集标题
-            source_urls: 源链接列表
-            target_folder: 目标文件夹名称
+            series_title: 剧集官方正规标题（如"庆余年第二季"）
+            sources: 源字典，Key为资源分享标题（如"[4K Remux] QYN.S02.2160p"），
+                    Value为资源链接（如"https://pan.quark.cn/s/xxx"）
+            target_folder: 目标文件夹名称，默认为"{series_title}_智能下载"
             
         Returns:
-            处理结果统计
+            dict: 处理结果统计，包含：
+                - success: 是否成功
+                - series_title: 剧集标题
+                - source_count: 处理的源数量
+                - selected_count: 选择的文件数量
+                - save_result: 转存结果统计
+                - execution_time: 执行时间
+                - mode: 处理模式（enhanced/legacy）
+                
+        Example:
+            >>> system = SmartChaseSystem()
+            >>> sources = {
+            ...     "[4K Remux] QYN.S02.2160p.ZhangSan": "https://pan.quark.cn/s/demo1",
+            ...     "庆余年2.1080p.HDR.LiSi": "https://pan.quark.cn/s/demo2"
+            ... }
+            >>> result = system.process_series("庆余年第二季", sources)
+            >>> print(f"成功处理: {result['success']}")
         """
         start_time = time.time()
         logger.info(f"开始处理剧集: {series_title}")
+        logger.info(f"接收到 {len(sources)} 个源，使用多源异构标题适配模式")
         
         try:
-            # 预步骤: 快速状态查询 - 获取缺失集数用于动态漏斗筛选
-            logger.info("=" * 50)
-            logger.info("预步骤: 快速状态查询")
-            logger.info("=" * 50)
+            # v4.1+ 优先使用增强管道
+            if self.use_enhanced_pipeline:
+                logger.info("🚀 使用增强管道处理")
+                
+                # 将Dict[str, str]转换为List[str]以兼容现有管道
+                source_urls = list(sources.values())
+                
+                # 使用异步处理, 但在同步上下文中运行
+                import asyncio
+                
+                # 检查是否已有事件循环
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 如果已有运行中的事件循环, 创建新任务
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(
+                                asyncio.run,
+                                self.pipeline_orchestrator.process_series_enhanced(
+                                    series_title, source_urls, target_folder
+                                )
+                            )
+                            result = future.result()
+                    else:
+                        # 没有运行中的事件循环, 直接运行
+                        result = asyncio.run(
+                            self.pipeline_orchestrator.process_series_enhanced(
+                                series_title, source_urls, target_folder
+                            )
+                        )
+                except RuntimeError:
+                    # 创建新的事件循环
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(
+                            self.pipeline_orchestrator.process_series_enhanced(
+                                series_title, source_urls, target_folder
+                            )
+                        )
+                    finally:
+                        loop.close()
+                
+                return result
             
-            # 快速获取剧集状态以计算缺失集数
-            from io_layer.state_provider import create_state_provider
-            state_provider = create_state_provider()
-            series_state = state_provider.get_series_state(series_title)
-            
-            missing_episodes = len(series_state.tmdb_total_aired) - len(series_state.local_existing)
-            logger.info(f"剧集状态: TMDB {len(series_state.tmdb_total_aired)} 集, "
-                       f"本地 {len(series_state.local_existing)} 集, "
-                       f"缺失 {missing_episodes} 集")
-            
-            # 第一步: 源头竞价 - v4.1 动态漏斗筛选
-            logger.info("\n" + "=" * 50)
-            logger.info("第一步: 源头竞价 (v4.1 动态漏斗筛选)")
-            logger.info("=" * 50)
-            
-            # 将URL列表转换为source_manager期望的格式
-            sources_dict = {series_title: [f"源{i+1},{url}" for i, url in enumerate(source_urls)]}
-            ranked_sources = self.source_manager.rank_sources(sources_dict, missing_episodes)
-            if not ranked_sources:
-                logger.error("没有有效的源链接")
-                return {"success": False, "error": "没有有效的源链接"}
-            
-            logger.info(f"源头竞价完成: 选择了 {len(ranked_sources)} 个优质源")
-            for i, source in enumerate(ranked_sources[:5], 1):  # 显示前5个
-                logger.info(f"  {i}. {source.title} (评分: {source.score})")
-            
-            # 第二步: 上下文构建 - 爬取文件并构建分析上下文
-            logger.info("\n" + "=" * 50)
-            logger.info("第二步: 上下文构建")
-            logger.info("=" * 50)
-            
-            # 将RankedSource对象转换为字典格式
-            sources_for_context = [{"title": s.title, "url": s.url} for s in ranked_sources]
-            context = self.context_builder.build_context(sources_for_context, series_title)
-            if not context or not context.candidates:
-                logger.error("上下文构建失败或没有找到候选文件")
-                return {"success": False, "error": "没有找到候选文件"}
-            
-            logger.info(f"上下文构建完成: 找到 {len(context.candidates)} 个候选文件")
-            logger.info(f"剧集状态: TMDB {len(context.state.tmdb_total_aired)} 集, "
-                       f"本地 {len(context.state.local_existing)} 集")
-            
-            # 第三步: LLM智能解析 - 解析文件元数据
-            logger.info("\n" + "=" * 50)
-            logger.info("第三步: LLM智能解析")
-            logger.info("=" * 50)
-            
-            parsed_results = self.llm_client.parse_files(context.candidates)
-            if not parsed_results:
-                logger.error("LLM解析失败")
-                return {"success": False, "error": "LLM解析失败"}
-            
-            valid_results = [r for r in parsed_results if r.is_valid_video]
-            logger.info(f"LLM解析完成: {len(parsed_results)} 个文件, "
-                       f"{len(valid_results)} 个有效视频")
-            
-            # 第四步: 逻辑裁决 - v4.1 智能一致性洗码 + 选择最优文件
-            logger.info("\n" + "=" * 50)
-            logger.info("第四步: 逻辑裁决 (v4.1 智能一致性洗码)")
-            logger.info("=" * 50)
-            
-            selected_files = self.decision_maker.decide(context, parsed_results)
-            if not selected_files:
-                logger.warning("没有选择到任何文件")
-                return {"success": True, "selected_count": 0, "message": "没有需要下载的文件"}
-            
-            logger.info(f"逻辑裁决完成: 选择了 {len(selected_files)} 个文件")
-            
-            # 显示选择结果
-            total_size = sum(f.file_node.size for f in selected_files)
-            logger.info(f"选择文件总大小: {total_size/(1024**3):.1f} GB")
-            
-            for i, selected in enumerate(selected_files[:5], 1):  # 显示前5个
-                video_meta = selected.video_meta
-                logger.info(f"  {i}. E{video_meta.episode:02d}: {video_meta.resolution} "
-                           f"({video_meta.quality_score}分)")
-            
-            # 第五步: 批量转存 - v4.1 标准化重命名
-            logger.info("\n" + "=" * 50)
-            logger.info("第五步: 批量转存 (v4.1 标准化重命名)")
-            logger.info("=" * 50)
-            
-            if not target_folder:
-                target_folder = f"{series_title}_智能下载"
-            
-            save_result = save_files_sync(selected_files, target_folder)
-            
-            logger.info(f"批量转存完成: 成功 {save_result.success_count}/{save_result.total_files} "
-                       f"({save_result.success_rate:.1%})")
-            
-            # 处理完成
-            execution_time = time.time() - start_time
-            
-            result = {
-                "success": True,
-                "series_title": series_title,
-                "missing_episodes": missing_episodes,
-                "source_count": len(ranked_sources),
-                "candidate_count": len(context.candidates),
-                "parsed_count": len(parsed_results),
-                "valid_count": len(valid_results),
-                "selected_count": len(selected_files),
-                "save_result": {
-                    "total_files": save_result.total_files,
-                    "success_count": save_result.success_count,
-                    "failed_count": save_result.failed_count,
-                    "success_rate": save_result.success_rate
-                },
-                "execution_time": execution_time,
-                "total_size_gb": total_size / (1024**3)
-            }
-            
-            logger.info(f"\n🎉 剧集处理完成: {series_title}")
-            logger.info(f"总耗时: {execution_time:.1f} 秒")
-            logger.info(f"转存成功率: {save_result.success_rate:.1%}")
-            
-            return result
+            # 降级到传统处理流程
+            logger.info("🔧 使用传统管道处理")
+            return self._process_series_legacy(series_title, sources, target_folder, start_time)
             
         except Exception as e:
             execution_time = time.time() - start_time
@@ -212,12 +176,159 @@ class SmartChaseSystem:
                 "execution_time": execution_time
             }
     
+    def _process_series_legacy(self, series_title: str, sources: Dict[str, str], 
+                              target_folder: Optional[str], start_time: float) -> dict:
+        """
+        传统剧集处理流程 (降级模式) - 支持多源异构标题适配
+        
+        Args:
+            series_title: 剧集标题（官方正规标题）
+            sources: 源字典，Key为资源分享标题，Value为资源链接
+            target_folder: 目标文件夹名称
+            start_time: 开始时间
+            
+        Returns:
+            处理结果统计
+        """
+        # 预步骤: 快速状态查询 - 获取缺失集数用于动态漏斗筛选
+        logger.info("=" * 50)
+        logger.info("预步骤: 快速状态查询")
+        logger.info("=" * 50)
+        
+        # 快速获取剧集状态以计算缺失集数
+        from io_layer.state_provider import create_state_provider
+        state_provider = create_state_provider()
+        series_state = state_provider.get_state_with_cache(series_title)
+        
+        missing_episodes = len(series_state.tmdb_total_aired) - len(series_state.local_existing)
+        logger.info(f"剧集状态: TMDB {len(series_state.tmdb_total_aired)} 集, "
+                   f"本地 {len(series_state.local_existing)} 集, "
+                   f"缺失 {missing_episodes} 集")
+        
+        # 第一步: 源头竞价 - v4.1 动态漏斗筛选 + 多源异构标题适配
+        logger.info("\n" + "=" * 50)
+        logger.info("第一步: 源头竞价 (v4.1 动态漏斗筛选 + 多源异构标题适配)")
+        logger.info("=" * 50)
+        
+        # 构建格式: "分享标题,URL" - 使用分享标题而非自动生成的"源{i+1}"
+        sources_dict = {
+            series_title: [f"{share_title},{url}" for share_title, url in sources.items()]
+        }
+        
+        logger.info(f"构建源字典完成，包含 {len(sources)} 个分享标题:")
+        for i, (share_title, url) in enumerate(list(sources.items())[:3], 1):  # 显示前3个
+            logger.info(f"  {i}. {share_title[:50]}...")
+        
+        ranked_sources = self.source_manager.rank_sources(sources_dict, missing_episodes)
+        if not ranked_sources:
+            logger.error("没有有效的源链接")
+            return {"success": False, "error": "没有有效的源链接"}
+        
+        logger.info(f"源头竞价完成: 选择了 {len(ranked_sources)} 个优质源")
+        for i, source in enumerate(ranked_sources[:5], 1):  # 显示前5个
+            logger.info(f"  {i}. {source.title} (评分: {source.score})")
+        
+        # 第二步: 上下文构建 - 爬取文件并构建分析上下文
+        logger.info("\n" + "=" * 50)
+        logger.info("第二步: 上下文构建")
+        logger.info("=" * 50)
+        
+        # 将RankedSource对象转换为字典格式
+        sources_for_context = [{"title": s.title, "url": s.url} for s in ranked_sources]
+        context = self.context_builder.build_context(sources_for_context, series_title)
+        if not context or not context.candidates:
+            logger.error("上下文构建失败或没有找到候选文件")
+            return {"success": False, "error": "没有找到候选文件"}
+        
+        logger.info(f"上下文构建完成: 找到 {len(context.candidates)} 个候选文件")
+        logger.info(f"剧集状态: TMDB {len(context.state.tmdb_total_aired)} 集, "
+                   f"本地 {len(context.state.local_existing)} 集")
+        
+        # 第三步: LLM智能解析 - 解析文件元数据 + 官方标题基准
+        logger.info("\n" + "=" * 50)
+        logger.info("第三步: LLM智能解析 (官方标题基准)")
+        logger.info("=" * 50)
+        
+        # 传递官方标题给LLM客户端作为基准锚点
+        logger.info(f"使用官方标题作为基准: {series_title}")
+        parsed_results = self.llm_client.parse_files(context.candidates, standard_title=series_title)
+        if not parsed_results:
+            logger.error("LLM解析失败")
+            return {"success": False, "error": "LLM解析失败"}
+        
+        valid_results = [r for r in parsed_results if r.is_valid_video]
+        logger.info(f"LLM解析完成: {len(parsed_results)} 个文件, "
+                   f"{len(valid_results)} 个有效视频")
+        
+        # 第四步: 逻辑裁决 - v4.1 智能一致性洗码 + 选择最优文件
+        logger.info("\n" + "=" * 50)
+        logger.info("第四步: 逻辑裁决 (v4.1 智能一致性洗码)")
+        logger.info("=" * 50)
+        
+        selected_files = self.decision_maker.decide(context, parsed_results)
+        if not selected_files:
+            logger.warning("没有选择到任何文件")
+            return {"success": True, "selected_count": 0, "message": "没有需要下载的文件"}
+        
+        logger.info(f"逻辑裁决完成: 选择了 {len(selected_files)} 个文件")
+        
+        # 显示选择结果
+        total_size = sum(f.file_node.size for f in selected_files)
+        logger.info(f"选择文件总大小: {total_size/(1024**3):.1f} GB")
+        
+        for i, selected in enumerate(selected_files[:5], 1):  # 显示前5个
+            video_meta = selected.video_meta
+            logger.info(f"  {i}. E{video_meta.episode:02d}: {video_meta.resolution} "
+                       f"({video_meta.quality_score}分)")
+        
+        # 第五步: 批量转存 - v4.1 标准化重命名
+        logger.info("\n" + "=" * 50)
+        logger.info("第五步: 批量转存 (v4.1 标准化重命名)")
+        logger.info("=" * 50)
+        
+        if not target_folder:
+            target_folder = f"{series_title}_智能下载"
+        
+        save_result = save_files_sync(selected_files, target_folder)
+        
+        logger.info(f"批量转存完成: 成功 {save_result.success_count}/{save_result.total_files} "
+                   f"({save_result.success_rate:.1%})")
+        
+        # 处理完成
+        execution_time = time.time() - start_time
+        
+        result = {
+            "success": True,
+            "series_title": series_title,
+            "missing_episodes": missing_episodes,
+            "source_count": len(ranked_sources),
+            "candidate_count": len(context.candidates),
+            "parsed_count": len(parsed_results),
+            "valid_count": len(valid_results),
+            "selected_count": len(selected_files),
+            "save_result": {
+                "total_files": save_result.total_files,
+                "success_count": save_result.success_count,
+                "failed_count": save_result.failed_count,
+                "success_rate": save_result.success_rate
+            },
+            "execution_time": execution_time,
+            "total_size_gb": total_size / (1024**3),
+            "mode": "legacy"
+        }
+        
+        logger.info(f"\n🎉 剧集处理完成: {series_title}")
+        logger.info(f"总耗时: {execution_time:.1f} 秒")
+        logger.info(f"转存成功率: {save_result.success_rate:.1%}")
+        
+        return result
+    
     def batch_process(self, series_list: List[dict]) -> List[dict]:
         """
         批量处理多个剧集
         
         Args:
-            series_list: 剧集列表，每个元素包含 title 和 sources
+            series_list: 剧集列表, 每个元素包含 title 和 sources (Dict[str, str])
             
         Returns:
             处理结果列表
@@ -231,13 +342,13 @@ class SmartChaseSystem:
             logger.info(f"{'='*60}")
             
             title = series_info.get("title", f"未知剧集{i}")
-            sources = series_info.get("sources", [])
+            sources = series_info.get("sources", {})  # 现在是Dict而不是List
             target_folder = series_info.get("target_folder")
             
             result = self.process_series(title, sources, target_folder)
             results.append(result)
             
-            # 简短休息，避免API过载
+            # 简短休息, 避免API过载
             if i < len(series_list):
                 time.sleep(1)
         
@@ -259,25 +370,44 @@ class SmartChaseSystem:
         Returns:
             系统状态信息
         """
-        return {
-            "source_manager": self.source_manager.get_statistics(),
-            "context_builder": self.context_builder.get_statistics(),
-            "llm_client": self.llm_client.get_statistics(),
-            "decision_maker": self.decision_maker.get_statistics(),
-            "quark_saver": self.quark_saver.get_statistics()
-        }
+        if self.use_enhanced_pipeline:
+            # 使用管道编排器的状态
+            return self.pipeline_orchestrator.get_system_status()
+        else:
+            # 传统组件状态
+            return {
+                "source_manager": self.source_manager.get_statistics(),
+                "context_builder": self.context_builder.get_statistics(),
+                "llm_client": self.llm_client.get_statistics(),
+                "decision_maker": self.decision_maker.get_statistics(),
+                "quark_saver": self.quark_saver.get_statistics(),
+                "mode": "legacy"
+            }
 
 
 def create_demo_series_list() -> List[dict]:
-    """创建演示用的剧集列表"""
+    """
+    创建演示用的剧集列表 - 展示多源异构标题适配功能
+    
+    演示场景：
+    1. 庆余年第二季 - 展示缩写识别（QYN=庆余年）
+    2. 不同质量标识符的识别（4K Remux, 1080p HDR, 720p）
+    3. 分享标题与官方标题的智能匹配
+    
+    Returns:
+        List[dict]: 演示剧集列表，每个元素包含：
+            - title: 官方正规标题
+            - sources: 分享标题到链接的映射
+            - target_folder: 目标文件夹（可选）
+    """
     return [
         {
             "title": "庆余年第二季",
-            "sources": [
-                "https://pan.quark.cn/s/demo123456",
-                "https://pan.quark.cn/s/demo789012",
-                "https://pan.quark.cn/s/demo345678"
-            ],
+            "sources": {
+                "[4K Remux] QYN.S02.2160p.ZhangSan": "https://pan.quark.cn/s/demo123456",
+                "庆余年2.1080p.HDR.LiSi": "https://pan.quark.cn/s/demo789012", 
+                "QYN第二季.720p.WangWu": "https://pan.quark.cn/s/demo345678"
+            },
             "target_folder": "庆余年第二季_智能下载"
         }
     ]
@@ -289,7 +419,7 @@ def main():
     setup_logging()
     
     # 解析命令行参数
-    parser = argparse.ArgumentParser(description="智能媒体资源治理系统 v4.0")
+    parser = argparse.ArgumentParser(description="智能媒体资源治理系统 v4.1")
     parser.add_argument("--title", type=str, help="剧集标题")
     parser.add_argument("--sources", type=str, nargs="+", help="源链接列表")
     parser.add_argument("--target", type=str, help="目标文件夹名称")
@@ -298,7 +428,7 @@ def main():
     
     args = parser.parse_args()
     
-    logger.info("智能媒体资源治理系统 v4.0 启动")
+    logger.info("智能媒体资源治理系统 v4.1 启动")
     
     # 加载配置
     config = get_config()
@@ -339,8 +469,19 @@ def main():
                     print(f"\n❌ 处理失败: {result.get('error', '未知错误')}")
         
         elif args.title and args.sources:
-            # 单个剧集处理
-            result = system.process_series(args.title, args.sources, args.target)
+            # 单个剧集处理 - 兼容旧格式，自动转换为新格式
+            logger.info("检测到命令行模式，将URL列表转换为多源异构格式")
+            
+            # 将List[str]转换为Dict[str, str]以兼容新接口
+            sources_dict = {}
+            for i, url in enumerate(args.sources, 1):
+                # 为兼容性生成简单的分享标题
+                share_title = f"命令行源{i}"
+                sources_dict[share_title] = url
+            
+            logger.info(f"转换完成: {len(args.sources)} 个URL -> {len(sources_dict)} 个源")
+            
+            result = system.process_series(args.title, sources_dict, args.target)
             
             if result.get("success"):
                 print(f"\n✅ 处理成功: {args.title}")
@@ -353,9 +494,10 @@ def main():
             # 显示帮助信息
             parser.print_help()
             print("\n使用示例:")
-            print("  python main.py --demo                    # 运行演示模式")
+            print("  python main.py --demo                    # 运行演示模式（多源异构标题适配）")
             print("  python main.py --status                  # 显示系统状态")
-            print("  python main.py --title '庆余年第二季' --sources 'url1' 'url2'  # 处理单个剧集")
+            print("  python main.py --title '庆余年第二季' --sources 'url1' 'url2'  # 处理单个剧集（兼容模式）")
+            print("\n注意: 新版本支持多源异构标题适配，建议使用演示模式体验完整功能")
     
     except KeyboardInterrupt:
         logger.info("用户中断程序")

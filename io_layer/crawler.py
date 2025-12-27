@@ -277,9 +277,23 @@ class QuarkCrawler:
         
         return files
     
+    async def crawl_share_link(self, share_url: str, source_context: str = "") -> List[RawFileNode]:
+        """
+        从分享链接爬取文件列表 (异步版本)
+        
+        Args:
+            share_url: 分享链接
+            source_context: 源上下文信息
+            
+        Returns:
+            文件节点列表
+        """
+        # 调用同步版本的fetch方法
+        return self.fetch(share_url, source_context)
+    
     def fetch(self, share_url: str, source_context: str = "") -> List[RawFileNode]:
         """
-        从分享链接获取文件列表
+        从分享链接获取文件列表 (同步版本)
         
         Args:
             share_url: 分享链接

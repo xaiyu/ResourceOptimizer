@@ -652,7 +652,42 @@ def create_decision_maker() -> DecisionMaker:
     """
     创建决策引擎实例的工厂函数
     
+    v4.1+ 更新: 优先返回EnhancedDecisionMaker，降级时返回基础DecisionMaker
+    
     Returns:
         配置好的决策引擎实例
     """
+    from config.config_loader import get_config_value
+    
+    # 检查是否启用增强功能
+    enhanced_enabled = get_config_value("enhanced_components.enable", True)
+    pipeline_mode = get_config_value("pipeline.mode", "dynamic")
+    
+    logger.info(f"🏭 创建决策引擎 (增强功能: {enhanced_enabled}, 模式: {pipeline_mode})")
+    
+    if enhanced_enabled and pipeline_mode in ["dynamic", "auto"]:
+        try:
+            # 尝试创建增强决策引擎
+            from core.enhanced_component_factory import create_enhanced_component_factory
+            from core.enhanced_decision_engine import EnhancedDecisionMaker
+            
+            factory = create_enhanced_component_factory()
+            enhanced_decision_maker = factory.create_enhanced_decision_maker()
+            
+            logger.info("✅ 成功创建增强决策引擎")
+            return enhanced_decision_maker
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 增强决策引擎创建失败: {e}")
+            
+            # 检查是否允许降级
+            fallback_enabled = get_config_value("pipeline.fallback_enabled", True)
+            if fallback_enabled:
+                logger.warning("🔄 降级到基础决策引擎")
+            else:
+                logger.error("❌ 降级被禁用，抛出异常")
+                raise
+    
+    # 创建基础决策引擎
+    logger.info("🔧 创建基础决策引擎")
     return DecisionMaker()

@@ -43,6 +43,37 @@ class ConfigValidator:
         if app_config.get('min_file_size_mb', 0) < 0:
             errors.append("app.min_file_size_mb 不能为负数")
         
+        # 验证动态漏斗配置
+        funnel_config = app_config.get('funnel', {})
+        if funnel_config.get('batch_size', 0) <= 0:
+            errors.append("app.funnel.batch_size 必须大于0")
+        if funnel_config.get('max_sources', 0) <= 0:
+            errors.append("app.funnel.max_sources 必须大于0")
+        if funnel_config.get('stop_multiplier', 0) <= 0:
+            errors.append("app.funnel.stop_multiplier 必须大于0")
+        
+        # 验证重试配置
+        retry_config = funnel_config.get('retry', {})
+        if retry_config.get('max_retries', 0) < 0:
+            errors.append("app.funnel.retry.max_retries 不能为负数")
+        if retry_config.get('backoff_factor', 0) <= 0:
+            errors.append("app.funnel.retry.backoff_factor 必须大于0")
+        
+        # 验证增强组件配置
+        enhanced_config = config.get('enhanced_components', {})
+        if enhanced_config.get('enable', True):
+            consistency_config = enhanced_config.get('consistency_checker', {})
+            if consistency_config.get('size_deviation', 0) <= 0:
+                errors.append("enhanced_components.consistency_checker.size_deviation 必须大于0")
+            if consistency_config.get('min_samples', 0) <= 0:
+                errors.append("enhanced_components.consistency_checker.min_samples 必须大于0")
+        
+        # 验证管道配置
+        pipeline_config = config.get('pipeline', {})
+        valid_modes = ['static', 'dynamic', 'auto']
+        if pipeline_config.get('mode', 'dynamic') not in valid_modes:
+            errors.append(f"pipeline.mode 必须是以下值之一: {valid_modes}")
+        
         # 验证API配置 (警告级别，不阻止启动)
         provider_config = config.get('provider', {})
         if not provider_config.get('silicon_api_key'):
@@ -149,23 +180,56 @@ class ConfigLoader:
             'SMART_CHASE_QUARK_COOKIE': ('provider', 'quark_cookie'),
             'SMART_CHASE_LOG_LEVEL': ('logging', 'level'),
             'SMART_CHASE_MAX_CONCURRENCY': ('app', 'max_concurrency'),
+            
+            # 动态漏斗配置
+            'SMART_CHASE_FUNNEL_BATCH_SIZE': ('app.funnel', 'batch_size'),
+            'SMART_CHASE_FUNNEL_MAX_SOURCES': ('app.funnel', 'max_sources'),
+            'SMART_CHASE_FUNNEL_STOP_MULTIPLIER': ('app.funnel', 'stop_multiplier'),
+            
+            # 增强组件配置
+            'SMART_CHASE_ENHANCED_ENABLE': ('enhanced_components', 'enable'),
+            'SMART_CHASE_CONSISTENCY_ENABLE': ('enhanced_components.consistency_checker', 'enable'),
+            'SMART_CHASE_NAMING_ENABLE': ('enhanced_components.naming_generator', 'enable'),
+            
+            # 管道配置
+            'SMART_CHASE_PIPELINE_MODE': ('pipeline', 'mode'),
+            'SMART_CHASE_PIPELINE_FALLBACK': ('pipeline', 'fallback_enabled'),
         }
         
-        for env_var, (section, key) in env_mappings.items():
+        for env_var, (section_path, key) in env_mappings.items():
             value = os.environ.get(env_var)
             if value:
-                if section not in config:
-                    config[section] = {}
+                # 处理嵌套路径
+                sections = section_path.split('.')
+                current = config
+                
+                # 创建嵌套结构
+                for section in sections[:-1]:
+                    if section not in current:
+                        current[section] = {}
+                    current = current[section]
+                
+                final_section = sections[-1]
+                if final_section not in current:
+                    current[final_section] = {}
                 
                 # 类型转换
-                if key == 'max_concurrency':
+                if key in ['max_concurrency', 'batch_size', 'max_sources']:
                     try:
                         value = int(value)
                     except ValueError:
                         logger.warning(f"环境变量 {env_var} 值无效，忽略")
                         continue
+                elif key in ['stop_multiplier']:
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        logger.warning(f"环境变量 {env_var} 值无效，忽略")
+                        continue
+                elif key in ['enable', 'fallback_enabled']:
+                    value = value.lower() in ('true', '1', 'yes', 'on')
                 
-                config[section][key] = value
+                current[final_section][key] = value
                 logger.info(f"应用环境变量覆盖: {env_var}")
         
         return config
@@ -219,3 +283,92 @@ def get_config() -> Dict[str, Any]:
 def get_config_value(key: str, default: Any = None) -> Any:
     """获取配置值的便捷函数"""
     return config_loader.get(key, default)
+
+def create_dynamic_funnel_config() -> 'DynamicFunnelConfig':
+    """创建动态漏斗配置对象"""
+    from core.contracts import DynamicFunnelConfig, RetryConfig, StopConditionConfig
+    
+    config = get_config()
+    funnel_config = config.get('app', {}).get('funnel', {})
+    
+    retry_config = RetryConfig(
+        max_retries=funnel_config.get('retry', {}).get('max_retries', 3),
+        backoff_factor=funnel_config.get('retry', {}).get('backoff_factor', 2.0),
+        initial_delay=funnel_config.get('retry', {}).get('initial_delay', 1.0),
+        max_delay=funnel_config.get('retry', {}).get('max_delay', 60.0)
+    )
+    
+    stop_config = StopConditionConfig(
+        candidate_multiplier=funnel_config.get('stop_conditions', {}).get('candidate_multiplier', 3.0),
+        quality_threshold_batches=funnel_config.get('stop_conditions', {}).get('quality_threshold_batches', 3),
+        score_threshold=funnel_config.get('stop_conditions', {}).get('score_threshold', 60),
+        enable_early_stop=funnel_config.get('stop_conditions', {}).get('enable_early_stop', True)
+    )
+    
+    return DynamicFunnelConfig(
+        batch_size=funnel_config.get('batch_size', 3),
+        max_sources=funnel_config.get('max_sources', 15),
+        stop_multiplier=funnel_config.get('stop_multiplier', 3.0),
+        enable_early_stop=funnel_config.get('enable_early_stop', True),
+        retry_config=retry_config,
+        stop_config=stop_config
+    )
+
+def create_consistency_config() -> 'ConsistencyConfig':
+    """创建一致性检查配置对象"""
+    from core.contracts import ConsistencyConfig
+    
+    config = get_config()
+    consistency_config = config.get('enhanced_components', {}).get('consistency_checker', {})
+    
+    return ConsistencyConfig(
+        enable=consistency_config.get('enable', True),
+        size_deviation=consistency_config.get('size_deviation', 0.5),
+        min_samples=consistency_config.get('min_samples', 3)
+    )
+
+def create_naming_config() -> 'NamingConfig':
+    """创建命名配置对象"""
+    from core.contracts import NamingConfig
+    
+    config = get_config()
+    naming_config = config.get('enhanced_components', {}).get('naming_generator', {})
+    
+    return NamingConfig(
+        enable=naming_config.get('enable', True),
+        format_template=naming_config.get('format_template', "{title} S{season:02d}E{episode:02d} [{quality}].{ext}"),
+        quality_tags=naming_config.get('quality_tags', {
+            "2160p": "4K",
+            "1080p": "1080p", 
+            "hdr": "HDR",
+            "atmos": "Atmos"
+        })
+    )
+
+def create_component_config() -> 'ComponentConfig':
+    """创建组件配置对象"""
+    from core.contracts import ComponentConfig
+    
+    config = get_config()
+    enhanced_config = config.get('enhanced_components', {})
+    
+    return ComponentConfig(
+        consistency_config=create_consistency_config(),
+        naming_config=create_naming_config(),
+        enable_enhanced_features=enhanced_config.get('enable', True),
+        validate_on_creation=enhanced_config.get('validate_on_startup', True)
+    )
+
+def create_pipeline_config() -> 'PipelineConfig':
+    """创建管道配置对象"""
+    from core.contracts import PipelineConfig
+    
+    config = get_config()
+    pipeline_config = config.get('pipeline', {})
+    
+    return PipelineConfig(
+        funnel_config=create_dynamic_funnel_config(),
+        component_config=create_component_config(),
+        enable_dynamic_mode=pipeline_config.get('mode', 'dynamic') == 'dynamic',
+        fallback_to_static=pipeline_config.get('fallback_enabled', True)
+    )

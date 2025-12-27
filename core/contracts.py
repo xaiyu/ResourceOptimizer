@@ -211,3 +211,152 @@ class SeriesInfo:
     season: int                      # 季数
     total_episodes: int = 0          # 总集数
     tmdb_id: Optional[int] = None    # TMDB ID
+
+
+# ============================================================================
+# 动态漏斗循环与增强组件集成 - 新增数据结构
+# ============================================================================
+
+@dataclass
+class FunnelResult:
+    """动态漏斗处理结果"""
+    selected_sources: List[RankedSource]
+    candidate_files: List[RawFileNode]
+    stop_reason: str
+    performance_metrics: 'FunnelMetrics'
+    batch_history: List['BatchResult']
+
+
+@dataclass
+class FunnelMetrics:
+    """漏斗性能指标"""
+    total_batches: int
+    successful_batches: int
+    total_api_calls: int
+    total_processing_time: float
+    candidates_per_batch: List[int]
+    stop_condition_triggered: str
+
+
+@dataclass
+class BatchResult:
+    """批次处理结果"""
+    batch_index: int
+    sources_processed: int
+    candidates_found: int
+    processing_time: float
+    success: bool
+    error_message: Optional[str] = None
+
+
+@dataclass
+class StopDecision:
+    """停止决策"""
+    should_stop: bool
+    reason: str
+    confidence: float
+
+
+@dataclass
+class ValidationResult:
+    """组件验证结果"""
+    is_valid: bool
+    missing_components: List[str] = field(default_factory=list)
+    configuration_errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ComponentConfig:
+    """组件配置"""
+    consistency_config: ConsistencyConfig
+    naming_config: NamingConfig
+    enable_enhanced_features: bool = True
+    validate_on_creation: bool = True
+
+
+@dataclass
+class RetryConfig:
+    """重试配置"""
+    max_retries: int = 3
+    backoff_factor: float = 2.0
+    initial_delay: float = 1.0
+    max_delay: float = 60.0
+
+
+@dataclass
+class StopConditionConfig:
+    """停止条件配置"""
+    candidate_multiplier: float = 3.0
+    quality_threshold_batches: int = 3
+    score_threshold: int = 60
+    enable_early_stop: bool = True
+
+
+@dataclass
+class PipelineConfig:
+    """管道配置"""
+    funnel_config: DynamicFunnelConfig
+    component_config: ComponentConfig
+    enable_dynamic_mode: bool = True
+    fallback_to_static: bool = True
+
+
+@dataclass
+class EnhancedDecisionResult:
+    """增强的决策结果"""
+    selected_files: List[SelectedFile]
+    series_title: str
+    total_candidates: int
+    consistency_filtered: int
+    renamed_files: int
+    statistics: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RetryResult:
+    """重试结果"""
+    success: bool
+    total_attempts: int
+    final_result: Any
+    retry_history: List[Dict[str, Any]] = field(default_factory=list)
+    total_delay: float = 0.0
+
+
+@dataclass
+class FunnelContext:
+    """漏斗处理上下文"""
+    series_title: str
+    missing_episodes: Set[int]
+    target_candidates: int
+    current_batch: int = 0
+    total_candidates: int = 0
+
+
+# 扩展现有的DynamicFunnelConfig
+@dataclass
+class DynamicFunnelConfig:
+    """
+    [v4.1+] 动态漏斗筛选配置 - 扩展版
+    """
+    batch_size: int = 3              # 每批检查源数量
+    max_sources: int = 15            # 最大检查源数量 (增加到15)
+    stop_multiplier: float = 3.0     # 停止阈值系数 (候选数 > 缺集数 * 此系数)
+    enable_early_stop: bool = True   # 是否启用提前停止
+    
+    # 新增配置项
+    retry_config: RetryConfig = field(default_factory=RetryConfig)
+    stop_config: StopConditionConfig = field(default_factory=StopConditionConfig)
+
+
+# 错误恢复相关
+from enum import Enum
+
+class RecoveryAction(Enum):
+    """恢复动作枚举"""
+    RETRY_WITH_BACKOFF = "retry_with_backoff"
+    FAIL_FAST = "fail_fast"
+    REDUCE_BATCH_SIZE = "reduce_batch_size"
+    FALLBACK_TO_STATIC = "fallback_to_static"
+    DISABLE_CONSISTENCY_CHECK = "disable_consistency_check"
+    USE_ORIGINAL_NAMES = "use_original_names"
+    FALLBACK_TO_BASIC_DECISION = "fallback_to_basic_decision"

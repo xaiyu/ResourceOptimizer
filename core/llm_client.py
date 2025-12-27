@@ -51,6 +51,9 @@ class LLMClient:
         self.last_failure_time = 0
         self.circuit_open = False
         
+        # 官方标题基准（用于提示词增强）
+        self._current_standard_title = None
+        
         if not self.api_key:
             logger.warning("SiliconFlow API密钥未配置，LLM解析功能将不可用")
         else:
@@ -134,6 +137,79 @@ class LLMClient:
         logger.info(f"批量解析完成: 成功 {success_count}/{len(file_nodes)} 个文件")
         return parsed_results
     
+    def parse_files(self, file_nodes: List[RawFileNode], standard_title: str = None) -> List[VideoMeta]:
+        """
+        解析文件列表 - v4.1 多源异构标题适配核心方法
+        
+        核心功能：
+        1. 支持官方标题作为解析基准锚点
+        2. 智能识别缩写、拼音、谐音等变体形式
+        3. 基于官方标题判断文件有效性
+        4. 异步批量处理提高效率
+        
+        Args:
+            file_nodes: 文件节点列表，包含文件名、路径、大小等信息
+            standard_title: 官方正规标题（如"庆余年第二季"），用作解析基准锚点。
+                          LLM将基于此标题识别文件是否相关，并解析缩写形式。
+            
+        Returns:
+            List[VideoMeta]: 解析结果列表，包含：
+                - filename: 文件名
+                - episode: 集数
+                - season: 季数
+                - resolution: 分辨率
+                - quality_score: 质量评分
+                - is_valid_video: 是否为有效视频
+                
+        Example:
+            >>> client = LLMClient()
+            >>> files = [RawFileNode(filename="QYN.S02.E01.4K.mp4", ...)]
+            >>> results = client.parse_files(files, standard_title="庆余年第二季")
+            >>> print(f"识别到集数: {results[0].episode}")  # 输出: 1
+            
+        Note:
+            - 当standard_title为None时，使用通用解析模式
+            - 官方标题基准能显著提高识别准确率
+            - 支持识别QYN=庆余年、ZHZ=甄嬛传等常见缩写
+        """
+        logger.info(f"开始解析 {len(file_nodes)} 个文件")
+        if standard_title:
+            logger.info(f"使用官方标题基准: {standard_title}")
+        
+        # 临时存储standard_title以供_build_prompt使用
+        self._current_standard_title = standard_title
+        
+        try:
+            # 使用asyncio运行异步批量解析
+            import asyncio
+            
+            # 检查是否已有事件循环
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果已有运行中的事件循环，创建新任务
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, self.batch_parse(file_nodes))
+                        result = future.result()
+                else:
+                    # 没有运行中的事件循环，直接运行
+                    result = asyncio.run(self.batch_parse(file_nodes))
+            except RuntimeError:
+                # 创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(self.batch_parse(file_nodes))
+                finally:
+                    loop.close()
+            
+            return result
+            
+        finally:
+            # 清理临时存储的standard_title
+            self._current_standard_title = None
+    
     async def _call_llm_api(self, file_node: RawFileNode) -> VideoMeta:
         """
         调用LLM API进行解析
@@ -192,7 +268,7 @@ class LLMClient:
     
     def _build_prompt(self, file_node: RawFileNode) -> str:
         """
-        构建极简提示词模板
+        构建增强提示词模板 - 支持官方标题基准
         
         Args:
             file_node: 文件节点
@@ -200,25 +276,36 @@ class LLMClient:
         Returns:
             提示词字符串
         """
-        # 极简提示词，节省token
-        prompt = f"""解析视频文件信息，返回JSON格式：
+        # 基础提示词
+        base_prompt = f"""解析视频文件信息，返回JSON格式：
 文件名: {file_node.filename}
 路径: {file_node.full_path}
-来源: {file_node.source_context}
+来源: {file_node.source_context}"""
+        
+        # 如果有官方标题，注入基准信息
+        if hasattr(self, '_current_standard_title') and self._current_standard_title:
+            base_prompt += f"""
+
+【重要】官方正规剧名是 "{self._current_standard_title}"。
+请以此为基准处理文件名中的缩写、拼音或谐音（例如 QYN = 庆余年）。
+如果文件名明显不属于该剧集，请标记 is_valid_video=False。"""
+        
+        # 完整提示词
+        full_prompt = base_prompt + """
 
 返回格式：
-{{
+{
   "title_cn": "中文剧名",
   "season": 季数(数字),
   "episode": 集数(数字),
   "resolution": "分辨率(如4K/2160p/1080p/720p)",
   "quality_score": 质量评分(0-100),
   "is_valid_video": true/false
-}}
+}
 
 只返回JSON，不要其他内容。"""
         
-        return prompt
+        return full_prompt
     
     def _parse_llm_response(self, response_data: Dict[str, Any], file_node: RawFileNode) -> VideoMeta:
         """
