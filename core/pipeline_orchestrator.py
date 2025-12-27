@@ -147,14 +147,14 @@ class PipelineOrchestrator:
     
     async def process_series_enhanced(self, 
                                     series_title: str,
-                                    source_urls: List[str],
+                                    sources: Dict[str, str],
                                     target_folder: Optional[str] = None) -> Dict[str, Any]:
         """
         增强版剧集处理流程
         
         Args:
             series_title: 剧集标题
-            source_urls: 源链接列表
+            sources: 源字典 {分享标题: URL}，保持完整的标题信息用于评分和LLM分析
             target_folder: 目标文件夹名称
             
         Returns:
@@ -168,11 +168,11 @@ class PipelineOrchestrator:
         try:
             if self.current_mode == PipelineMode.DYNAMIC:
                 return await self._process_with_dynamic_mode(
-                    series_title, source_urls, target_folder, start_time
+                    series_title, sources, target_folder, start_time
                 )
             else:
                 return await self._process_with_static_mode(
-                    series_title, source_urls, target_folder, start_time
+                    series_title, sources, target_folder, start_time
                 )
                 
         except Exception as e:
@@ -186,7 +186,7 @@ class PipelineOrchestrator:
                 self._fallback_to_static("处理异常")
                 
                 return await self._process_with_static_mode(
-                    series_title, source_urls, target_folder, start_time
+                    series_title, sources, target_folder, start_time
                 )
             else:
                 execution_time = time.time() - start_time
@@ -199,7 +199,7 @@ class PipelineOrchestrator:
     
     async def _process_with_dynamic_mode(self, 
                                        series_title: str,
-                                       source_urls: List[str],
+                                       sources: Dict[str, str],
                                        target_folder: Optional[str],
                                        start_time: float) -> Dict[str, Any]:
         """
@@ -207,7 +207,7 @@ class PipelineOrchestrator:
         
         Args:
             series_title: 剧集标题
-            source_urls: 源链接列表
+            sources: 源字典 {分享标题: URL}
             target_folder: 目标文件夹
             start_time: 开始时间
             
@@ -223,8 +223,9 @@ class PipelineOrchestrator:
             state_provider = create_state_provider()
             series_state = state_provider.get_state_with_cache(series_title)
             
-            # 步骤2: 源头竞价 (使用静态组件)
-            sources_dict = {series_title: [f"源{i+1},{url}" for i, url in enumerate(source_urls)]}
+            # 步骤2: 源头竞价 (保持完整的分享标题信息)
+            # 将 Dict[str, str] 转换为 SourceManager 期望的格式
+            sources_dict = {series_title: [f"{title},{url}" for title, url in sources.items()]}
             ranked_sources = self.source_manager.rank_sources(sources_dict, len(series_state.get_missing_episodes()))
             
             if not ranked_sources:
@@ -327,7 +328,7 @@ class PipelineOrchestrator:
     
     async def _process_with_static_mode(self, 
                                       series_title: str,
-                                      source_urls: List[str],
+                                      sources: Dict[str, str],
                                       target_folder: Optional[str],
                                       start_time: float) -> Dict[str, Any]:
         """
@@ -335,7 +336,7 @@ class PipelineOrchestrator:
         
         Args:
             series_title: 剧集标题
-            source_urls: 源链接列表
+            sources: 源字典 {分享标题: URL}
             target_folder: 目标文件夹
             start_time: 开始时间
             
@@ -351,8 +352,8 @@ class PipelineOrchestrator:
             state_provider = create_state_provider()
             series_state = state_provider.get_state_with_cache(series_title)
             
-            # 源头竞价
-            sources_dict = {series_title: [f"源{i+1},{url}" for i, url in enumerate(source_urls)]}
+            # 源头竞价 (保持完整的分享标题信息)
+            sources_dict = {series_title: [f"{title},{url}" for title, url in sources.items()]}
             ranked_sources = self.source_manager.rank_sources(sources_dict, len(series_state.get_missing_episodes()))
             
             if not ranked_sources:

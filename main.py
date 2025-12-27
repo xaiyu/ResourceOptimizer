@@ -121,8 +121,8 @@ class SmartChaseSystem:
             if self.use_enhanced_pipeline:
                 logger.info("🚀 使用增强管道处理")
                 
-                # 将Dict[str, str]转换为List[str]以兼容现有管道
-                source_urls = list(sources.values())
+                # 保持完整的源信息 (标题+URL) 传递给增强管道
+                # 不再丢弃分享标题，确保评分系统和LLM上下文完整
                 
                 # 使用异步处理, 但在同步上下文中运行
                 import asyncio
@@ -137,7 +137,7 @@ class SmartChaseSystem:
                             future = executor.submit(
                                 asyncio.run,
                                 self.pipeline_orchestrator.process_series_enhanced(
-                                    series_title, source_urls, target_folder
+                                    series_title, sources, target_folder
                                 )
                             )
                             result = future.result()
@@ -145,7 +145,7 @@ class SmartChaseSystem:
                         # 没有运行中的事件循环, 直接运行
                         result = asyncio.run(
                             self.pipeline_orchestrator.process_series_enhanced(
-                                series_title, source_urls, target_folder
+                                series_title, sources, target_folder
                             )
                         )
                 except RuntimeError:
@@ -155,7 +155,7 @@ class SmartChaseSystem:
                     try:
                         result = loop.run_until_complete(
                             self.pipeline_orchestrator.process_series_enhanced(
-                                series_title, source_urls, target_folder
+                                series_title, sources, target_folder
                             )
                         )
                     finally:
