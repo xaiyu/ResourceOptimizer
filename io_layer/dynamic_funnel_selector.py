@@ -213,13 +213,14 @@ class DynamicFunnelSelector:
                 self.metrics.candidates_per_batch.append(batch_result.candidates_found)
                 self.metrics.total_api_calls += len(current_batch)
                 
-                # 检查停止条件
+                # 检查停止条件 - 传递预计算的目标候选数
                 remaining_sources = sources[batch_end:self.config.max_sources]
                 stop_decision = self.stop_evaluator.should_stop(
                     len(candidate_pool),
                     missing_episodes,
                     batch_history,
-                    remaining_sources
+                    remaining_sources,
+                    target_candidates  # 传递预计算的目标候选数，修复停止条件评估失效问题
                 )
                 
                 if stop_decision.should_stop:

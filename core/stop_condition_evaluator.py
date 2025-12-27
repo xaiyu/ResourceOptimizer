@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import List, Set
+from typing import List, Set, Optional
 from dataclasses import dataclass
 
 from core.contracts import (
@@ -46,7 +46,8 @@ class StopConditionEvaluator:
                    current_candidates: int,
                    missing_episodes: Set[int],
                    batch_history: List[BatchResult],
-                   remaining_sources: List[RankedSource]) -> StopDecision:
+                   remaining_sources: List[RankedSource],
+                   target_candidates: Optional[int] = None) -> StopDecision:
         """
         评估是否应该停止处理
         
@@ -55,6 +56,7 @@ class StopConditionEvaluator:
             missing_episodes: 缺失集数
             batch_history: 批次历史记录
             remaining_sources: 剩余源列表
+            target_candidates: 预计算的目标候选数（可选，用于洗版模式等特殊场景）
             
         Returns:
             停止决策
@@ -74,8 +76,10 @@ class StopConditionEvaluator:
             )
         
         # 1. 候选数量阈值检查
+        # 如果提供了预计算的目标候选数，使用它；否则使用缺失集数计算
+        missing_count = len(missing_episodes)
         candidate_decision = self._check_candidate_threshold(
-            current_candidates, len(missing_episodes)
+            current_candidates, missing_count, target_candidates
         )
         if candidate_decision.should_stop:
             return candidate_decision
@@ -107,50 +111,89 @@ class StopConditionEvaluator:
     
     def _check_candidate_threshold(self, 
                                  current_candidates: int, 
-                                 missing_count: int) -> StopDecision:
+                                 missing_count: int,
+                                 target_candidates: Optional[int] = None) -> StopDecision:
         """
         检查候选数量阈值
         
         Args:
             current_candidates: 当前候选数量
             missing_count: 缺失集数
+            target_candidates: 预计算的目标候选数（可选）
             
         Returns:
             停止决策
         """
+        # 如果提供了预计算的目标候选数，直接使用
+        if target_candidates is not None:
+            self.logger.info(f"🎯 使用预计算的目标候选数: {target_candidates}")
+            
+            # 处理边界情况：target_candidates 为 0
+            if target_candidates == 0:
+                # 如果目标为0，任何候选数都算达到目标
+                self.logger.info(f"🎯 目标候选数为0，任何候选数都视为达到目标")
+                return StopDecision(
+                    should_stop=True,
+                    reason=f"目标候选数为0，当前候选数{current_candidates}已达标",
+                    confidence=1.0
+                )
+            
+            if current_candidates >= target_candidates:
+                confidence = min(1.0, current_candidates / target_candidates)
+                
+                self.logger.info(f"🎯 候选数量达到预设目标:")
+                self.logger.info(f"   当前候选: {current_candidates}")
+                self.logger.info(f"   预设目标: {target_candidates}")
+                if missing_count > 0:
+                    self.logger.info(f"   覆盖率: {current_candidates/missing_count:.1f}x")
+                else:
+                    self.logger.info(f"   洗版模式覆盖率: {current_candidates}/{target_candidates}")
+                
+                return StopDecision(
+                    should_stop=True,
+                    reason=f"候选数量达到预设目标 ({current_candidates}/{target_candidates})",
+                    confidence=confidence
+                )
+            
+            return StopDecision(
+                should_stop=False,
+                reason=f"候选数量未达预设目标 ({current_candidates}/{target_candidates})",
+                confidence=0.0
+            )
+        
+        # 原有逻辑：基于缺失集数计算目标（保留向后兼容性）
         # 修复逻辑漏洞：处理 missing_count 为 0 的情况
-        # 在洗版/升级画质场景下，不应该立即停止
         min_candidates = getattr(self.config, 'min_candidates', 5)  # 默认最小5个候选
         
         if missing_count == 0:
             # 洗版/升级画质模式：使用最小候选数作为目标
-            target_candidates = min_candidates
-            self.logger.info(f"🔄 洗版/升级画质模式，目标候选数: {target_candidates}")
+            calculated_target = min_candidates
+            self.logger.info(f"🔄 洗版/升级画质模式，目标候选数: {calculated_target}")
         else:
             # 正常模式：使用缺失集数计算目标
             raw_target = int(missing_count * self.config.candidate_multiplier)
-            target_candidates = max(raw_target, min_candidates)
+            calculated_target = max(raw_target, min_candidates)
         
-        if current_candidates >= target_candidates:
-            confidence = min(1.0, current_candidates / target_candidates)
+        if current_candidates >= calculated_target:
+            confidence = min(1.0, current_candidates / calculated_target)
             
-            self.logger.info(f"🎯 候选数量达到阈值:")
+            self.logger.info(f"🎯 候选数量达到计算目标:")
             self.logger.info(f"   当前候选: {current_candidates}")
-            self.logger.info(f"   目标候选: {target_candidates}")
+            self.logger.info(f"   计算目标: {calculated_target}")
             if missing_count > 0:
                 self.logger.info(f"   覆盖率: {current_candidates/missing_count:.1f}x")
             else:
-                self.logger.info(f"   洗版模式覆盖率: {current_candidates}/{target_candidates}")
+                self.logger.info(f"   洗版模式覆盖率: {current_candidates}/{calculated_target}")
             
             return StopDecision(
                 should_stop=True,
-                reason=f"候选数量达到目标 ({current_candidates}/{target_candidates})",
+                reason=f"候选数量达到计算目标 ({current_candidates}/{calculated_target})",
                 confidence=confidence
             )
         
         return StopDecision(
             should_stop=False,
-            reason=f"候选数量不足 ({current_candidates}/{target_candidates})",
+            reason=f"候选数量不足 ({current_candidates}/{calculated_target})",
             confidence=0.0
         )
     
@@ -246,7 +289,8 @@ class StopConditionEvaluator:
                               current_candidates: int,
                               missing_episodes: Set[int],
                               batch_history: List[BatchResult],
-                              remaining_sources: List[RankedSource]) -> str:
+                              remaining_sources: List[RankedSource],
+                              target_candidates: Optional[int] = None) -> str:
         """
         获取停止原因摘要
         
@@ -255,12 +299,13 @@ class StopConditionEvaluator:
             missing_episodes: 缺失集数
             batch_history: 批次历史
             remaining_sources: 剩余源
+            target_candidates: 预计算的目标候选数（可选）
             
         Returns:
             停止原因摘要
         """
         decision = self.should_stop(
-            current_candidates, missing_episodes, batch_history, remaining_sources
+            current_candidates, missing_episodes, batch_history, remaining_sources, target_candidates
         )
         
         summary_parts = [
@@ -276,6 +321,9 @@ class StopConditionEvaluator:
                 f"处理批次: {len(batch_history)}",
                 f"剩余源数: {len(remaining_sources)}"
             ])
+            
+            if target_candidates is not None:
+                summary_parts.append(f"预设目标: {target_candidates}")
         
         return " | ".join(summary_parts)
     
