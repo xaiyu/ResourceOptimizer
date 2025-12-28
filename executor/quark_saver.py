@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 
 from core.contracts import SelectedFile, SaveResult
-from config.config_loader import get_config_value
+from config.config_service import get_quark_config, get_app_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +25,19 @@ class QuarkSaver:
     
     def __init__(self):
         """初始化夸克转存器"""
-        # 获取夸克配置
-        self.cookie = get_config_value("provider.quark_cookie", "")
-        self.user_agent = get_config_value("provider.quark_user_agent", "")
-        self.base_url = get_config_value("provider.quark_base_url", "")
-        self.timeout = get_config_value("provider.quark_timeout", 30)
-        self.retry_count = get_config_value("provider.quark_retry_count", 3)
-        self.retry_delay = get_config_value("provider.quark_retry_delay", 1)
+        # 获取配置 - 使用 config_service
+        quark_config = get_quark_config()
+        app_config = get_app_config()
+        
+        self.cookie = quark_config.cookie
+        self.user_agent = quark_config.user_agent
+        self.base_url = quark_config.base_url
+        self.timeout = quark_config.timeout
+        self.retry_count = quark_config.retry_count
+        self.retry_delay = quark_config.retry_delay
         
         # 并发控制
-        self.max_concurrency = get_config_value("app.max_concurrency", 4)
+        self.max_concurrency = app_config.max_concurrency
         
         # 验证配置
         if not self.cookie:
@@ -352,17 +355,9 @@ def save_files_sync(selected_files: List[SelectedFile],
     Returns:
         转存结果统计
     """
+    from core.utils import run_async_in_sync_context
+    
     saver = create_quark_saver()
     
-    # 在新的事件循环中运行异步函数
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        return loop.run_until_complete(saver.save_files(selected_files, target_folder))
-    finally:
-        # 不关闭循环，因为可能被其他地方使用
-        pass
+    # 使用统一的异步执行工具函数，正确处理各种事件循环场景
+    return run_async_in_sync_context(saver.save_files(selected_files, target_folder))

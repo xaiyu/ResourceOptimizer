@@ -12,7 +12,6 @@ from typing import Any, Optional, Dict
 from pathlib import Path
 
 from core.contracts import CacheEntry
-from config.config_loader import get_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -362,33 +361,20 @@ class CacheManager:
     
     def __init__(self):
         """初始化缓存管理器"""
-        # 从配置获取缓存设置
-        self.enabled = get_config_value("cache.enabled", True)
-        backend_type = get_config_value("cache.backend", "sqlite")
-        self.ttl_hours = get_config_value("cache.ttl_hours", 12)
+        # 从配置服务获取缓存设置
+        from config.config_service import get_cache_config
+        cache_config = get_cache_config()
+        
+        self.enabled = True  # 默认启用
+        self.ttl_hours = cache_config.ttl_hours
         self.ttl_seconds = self.ttl_hours * 3600
         
-        if not self.enabled:
-            logger.info("缓存已禁用")
-            self.backend = None
-            return
+        # 创建缓存后端 - 默认使用 SQLite
+        db_path = cache_config.db_path
+        max_entries = 10000
+        self.backend = SQLiteCacheBackend(db_path, max_entries)
         
-        # 创建缓存后端
-        if backend_type == "sqlite":
-            db_path = get_config_value("cache.db_path", "instance/cache/cache.db")
-            max_entries = get_config_value("cache.max_entries", 10000)
-            self.backend = SQLiteCacheBackend(db_path, max_entries)
-        elif backend_type == "file":
-            cache_dir = get_config_value("cache.db_path", "instance/cache").replace(".db", "")
-            max_entries = get_config_value("cache.max_entries", 10000)
-            self.backend = FileCacheBackend(cache_dir, max_entries)
-        else:
-            logger.error(f"不支持的缓存后端: {backend_type}")
-            self.backend = None
-            self.enabled = False
-            return
-        
-        logger.info(f"缓存管理器初始化完成: {backend_type}, TTL={self.ttl_hours}小时")
+        logger.info(f"缓存管理器初始化完成: sqlite, TTL={self.ttl_hours}小时")
     
     def get(self, key: str) -> Optional[Any]:
         """获取缓存值"""

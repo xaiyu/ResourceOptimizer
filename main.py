@@ -444,8 +444,11 @@ def main():
             
             for module_name, module_status in status.items():
                 print(f"\n{module_name}:")
-                for key, value in module_status.items():
-                    print(f"  {key}: {value}")
+                if isinstance(module_status, dict):
+                    for key, value in module_status.items():
+                        print(f"  {key}: {value}")
+                else:
+                    print(f"  {module_status}")
         
         elif args.demo:
             # 演示模式

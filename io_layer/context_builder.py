@@ -5,14 +5,13 @@
 
 import logging
 import re
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.contracts import RawFileNode, AnalysisContext, SeriesState, RankedSource
 from io_layer.crawler import QuarkCrawler, create_quark_crawler
 from io_layer.state_provider import StateProvider, create_state_provider
 from io_layer.source_manager import SourceManager
-from config.config_loader import get_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +20,33 @@ class ContextBuilder:
     """
     上下文构建器
     整合多个数据源，构建完整的分析上下文
+    
+    推荐使用 create_context_builder() 工厂函数创建实例
     """
     
-    def __init__(self):
-        """初始化上下文构建器"""
-        # 初始化各个组件
-        self.crawler = create_quark_crawler()
-        self.state_provider = create_state_provider()
-        self.source_manager = SourceManager()
+    def __init__(self, 
+                 crawler: Optional['QuarkCrawler'] = None,
+                 state_provider: Optional['StateProvider'] = None,
+                 source_manager: Optional['SourceManager'] = None):
+        """
+        初始化上下文构建器
         
-        # 获取配置
-        self.min_file_size_mb = get_config_value("app.min_file_size_mb", 200)
+        Args:
+            crawler: 夸克爬虫实例，如果不传则自动创建
+            state_provider: 状态提供者实例，如果不传则自动创建
+            source_manager: 源管理器实例，如果不传则自动创建
+        """
+        # 支持依赖注入，同时保持向后兼容
+        self.crawler = crawler if crawler is not None else create_quark_crawler()
+        self.state_provider = state_provider if state_provider is not None else create_state_provider()
+        self.source_manager = source_manager if source_manager is not None else SourceManager()
+        
+        # 获取配置 - 使用 config_service
+        from config.config_service import get_app_config
+        app_config = get_app_config()
+        self.min_file_size_mb = app_config.min_file_size_mb
         self.min_file_size_bytes = self.min_file_size_mb * 1024 * 1024
-        self.max_concurrency = get_config_value("app.max_concurrency", 4)
+        self.max_concurrency = app_config.max_concurrency
         
         # 支持的视频格式
         self.video_extensions = {
@@ -299,7 +312,7 @@ class ContextBuilder:
         # 重新构建上下文
         return self.build_context(sources, target_title)
     
-    def get_statistics(self) -> Dict[str, any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """
         获取上下文构建器统计信息
         
@@ -315,11 +328,24 @@ class ContextBuilder:
         }
 
 
-def create_context_builder() -> ContextBuilder:
+def create_context_builder(
+    crawler: Optional['QuarkCrawler'] = None,
+    state_provider: Optional['StateProvider'] = None,
+    source_manager: Optional['SourceManager'] = None
+) -> ContextBuilder:
     """
     创建上下文构建器实例的工厂函数
     
+    Args:
+        crawler: 夸克爬虫实例，可选
+        state_provider: 状态提供者实例，可选
+        source_manager: 源管理器实例，可选
+        
     Returns:
         配置好的上下文构建器实例
     """
-    return ContextBuilder()
+    return ContextBuilder(
+        crawler=crawler,
+        state_provider=state_provider,
+        source_manager=source_manager
+    )

@@ -4,13 +4,12 @@
 """
 
 import logging
-from typing import List, Set, Dict, Optional, Tuple
+from typing import List, Set, Dict, Optional, Tuple, Any
 from collections import defaultdict
 import re
 import time
 
 from core.contracts import AnalysisContext, VideoMeta, SelectedFile, RawFileNode, SeriesState
-from config.config_loader import get_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +22,18 @@ class DecisionMaker:
     
     def __init__(self):
         """初始化决策引擎"""
-        # 获取配置
-        self.quality_threshold = get_config_value("weights.quality_threshold", 70)
-        self.upgrade_threshold = get_config_value("weights.upgrade_threshold", 20)  # 洗版阈值
-        self.max_selections = get_config_value("app.max_selections", 50)  # 最大选择数量
+        # 获取配置 - 使用 config_service
+        from config.config_service import get_weights_config, get_app_config
         
-        # 权重配置
-        self.strategy_weights = get_config_value("weights.strategy_weights", {
-            "weight": 0.3,    # 质量权重
-            "naming": 0.4,    # 命名匹配
-            "llm": 0.2,       # LLM判断
-            "extra": 0.1      # 额外因素
-        })
+        weights_config = get_weights_config()
+        app_config = get_app_config()
+        
+        self.quality_threshold = weights_config.quality_threshold
+        self.upgrade_threshold = weights_config.upgrade_threshold
+        self.local_quality_baseline = weights_config.local_quality_baseline
+        self.strategy_weights = weights_config.strategy_weights
+        
+        self.max_selections = app_config.max_selections
         
         logger.info(f"决策引擎初始化完成 (质量阈值: {self.quality_threshold}, 洗版阈值: {self.upgrade_threshold})")
     
@@ -381,8 +380,8 @@ class DecisionMaker:
                 
                 # 寻找高质量候选
                 for file_node, video_meta in candidates:
-                    # 假设本地文件质量评分为70分（可以通过配置调整）
-                    local_quality = 70
+                    # 使用可配置的本地文件质量基准
+                    local_quality = self.local_quality_baseline
                     
                     # 如果新文件质量明显更高，考虑洗版
                     if video_meta.quality_score - local_quality >= self.upgrade_threshold:
@@ -439,12 +438,24 @@ class DecisionMaker:
         
         logger.info(f"文件大小中位数: {median_size/(1024**3):.2f} GB")
         
-        # 3. 计算偏差并过滤
+        # 3. 检查中位数是否有效（避免除零错误）
+        if median_size <= 0:
+            logger.warning("文件大小中位数为0或负数，跳过一致性检查")
+            return initial_selections
+        
+        # 4. 计算偏差并过滤
         consistent_files = []
         outliers = []
         
         for selected in initial_selections:
             file_size = selected.file_node.size
+            
+            # 跳过大小为0的文件
+            if file_size <= 0:
+                logger.warning(f"文件大小为0，跳过: {selected.file_node.filename}")
+                outliers.append((selected, float('inf')))
+                continue
+            
             deviation = abs(file_size - median_size) / median_size
             
             if deviation <= size_deviation:
@@ -633,7 +644,7 @@ class DecisionMaker:
         
         return ", ".join(reasons)
     
-    def get_statistics(self) -> Dict[str, any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """
         获取决策引擎统计信息
         

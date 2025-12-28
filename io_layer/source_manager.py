@@ -6,10 +6,10 @@
 import logging
 import re
 from typing import Dict, List, Union, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.contracts import RankedSource
-from config.config_loader import get_config_value
+from config.config_service import get_source_score_config, SourceScoreConfig
 
 logger = logging.getLogger(__name__)
 
@@ -21,36 +21,34 @@ class SourceInfo:
     url: str                  # 源链接
     user: str = ""            # 发布用户
     time: str = ""            # 发布时间
-    raw_data: Dict[str, Any] = None  # 原始数据
+    raw_data: Optional[Dict[str, Any]] = field(default=None)  # 原始数据
 
 
 class SourceManager:
     """
     源数据预处理管理器
     实现源头竞价算法，筛选优质资源
+
+    推荐使用 create_source_manager() 工厂函数创建实例
     """
-    
-    def __init__(self):
-        """初始化源管理器"""
-        # 从配置加载权重
-        self.keyword_weights = get_config_value("weights.keyword_score", {})
-        self.aliases = get_config_value("aliases", {})
-        
-        # 默认权重（防止配置缺失）
-        self.default_weights = {
-            "Remux": 50, "BluRay": 40, "4K": 30, "2160p": 30, "1080p": 10,
-            "HDR": 20, "杜比视界": 25, "全景声": 15, "HEVC": 10, "H265": 10,
-            "WEB-DL": 8, "TrueHD": 12, "DTS-HD": 12, "60fps": 8,
-            "中字": 5, "内嵌": 5, "无水印": 3, "纯净": 3,
-            # 负分关键词
-            "720p": -20, "Trailer": -100, "预告": -100, "广告": -100,
-            "测试": -50, "假4K": -80, "机翻": -60, "删减版": -70
-        }
-        
-        # 合并配置权重和默认权重
-        self.weights = {**self.default_weights, **self.keyword_weights}
-        
-        logger.info(f"源管理器初始化完成，加载了 {len(self.weights)} 个关键词权重")
+
+    def __init__(self, score_config: Optional[SourceScoreConfig] = None):
+        """
+        初始化源管理器
+
+        Args:
+            score_config: 源评分配置对象，如果不传则从集中式配置加载
+        """
+        if score_config is not None:
+            self.weights = score_config.weights
+            self.aliases = score_config.aliases
+        else:
+            config = get_source_score_config()
+            self.weights = config.weights
+            self.aliases = config.aliases
+
+        self.config = score_config
+        logger.info(f"源管理器初始化完成，加载了 {len(self.weights)} 个关键词权重, {len(self.aliases)} 个别名规则")
     
     def rank_sources(self, sources: Union[Dict[str, List[str]], List[Dict[str, str]]], missing_episodes: int = 0) -> List[RankedSource]:
         """
@@ -65,11 +63,14 @@ class SourceManager:
         Returns:
             排序后的源列表，动态数量（不再限制Top 3）
         """
-        # 获取动态漏斗配置
-        batch_size = get_config_value("app.funnel.batch_size", 3)
-        max_sources = get_config_value("app.funnel.max_sources", 10)
-        stop_multiplier = get_config_value("app.funnel.stop_multiplier", 3.0)
-        enable_early_stop = get_config_value("app.funnel.enable_early_stop", True)
+        # 获取动态漏斗配置 - 使用 config_service
+        from config.config_service import get_funnel_config
+        funnel_config = get_funnel_config()
+        
+        batch_size = funnel_config.batch_size
+        max_sources = funnel_config.max_sources
+        stop_multiplier = funnel_config.stop_multiplier
+        enable_early_stop = funnel_config.enable_early_stop
         
         all_sources = []
         

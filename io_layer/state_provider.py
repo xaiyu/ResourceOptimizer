@@ -10,26 +10,38 @@ from typing import Set, Optional, Dict, Any
 import requests
 
 from core.contracts import SeriesState
-from config.config_loader import get_config_value
+from config.config_service import TMDBConfig, get_tmdb_config
 from io_layer.cache_utils import cache_manager
 
 logger = logging.getLogger(__name__)
 
 
 class TMDBProvider:
-    """TMDB API提供者"""
-    
-    def __init__(self, api_key: str = ""):
+    """TMDB API提供者
+
+    支持两种初始化方式：
+    1. 传统方式：直接传入api_key
+    2. 配置注入：传入TMDBConfig配置对象（推荐）
+    """
+
+    def __init__(self, api_key: str = "", config: Optional[TMDBConfig] = None):
         """
         初始化TMDB提供者
-        
+
         Args:
-            api_key: TMDB API密钥，如果为空则从配置读取
+            api_key: TMDB API密钥（优先级高于config）
+            config: 集中式配置对象（推荐使用config_service.get_tmdb_config()获取）
         """
-        self.api_key = api_key or get_config_value("provider.tmdb_api_key", "")
-        self.base_url = get_config_value("provider.tmdb_base_url", "https://api.themoviedb.org/3")
-        self.language = get_config_value("provider.tmdb_language", "zh-CN")
+        # 获取配置（如果未传入则从 config_service 加载）
+        if config is None:
+            from config.config_service import get_tmdb_config
+            config = get_tmdb_config()
         
+        # 从配置对象读取
+        self.api_key = api_key or config.api_key
+        self.base_url = config.base_url
+        self.language = config.language
+
         if not self.api_key:
             logger.warning("TMDB API密钥未配置，剧集信息查询将不可用")
         else:
@@ -90,12 +102,13 @@ class TMDBProvider:
             logger.error(f"搜索TMDB剧集失败: {title}, 错误: {e}")
             return None
     
-    def get_aired_episodes(self, tv_id: int) -> Set[int]:
+    def get_aired_episodes(self, tv_id: int, target_season: int = 1) -> Set[int]:
         """
-        获取已播出的集数
+        获取指定季已播出的集数
         
         Args:
             tv_id: TMDB剧集ID
+            target_season: 目标季数，默认为第1季
             
         Returns:
             已播出集数的集合
@@ -104,11 +117,11 @@ class TMDBProvider:
             logger.error("TMDB API密钥未配置")
             return set()
         
-        # 检查缓存
-        cache_key = f"tmdb_episodes:{tv_id}"
+        # 检查缓存（包含季数信息）
+        cache_key = f"tmdb_episodes:{tv_id}:s{target_season}"
         cached_result = cache_manager.get(cache_key)
         if cached_result:
-            logger.debug(f"TMDB集数缓存命中: TV ID {tv_id}")
+            logger.debug(f"TMDB集数缓存命中: TV ID {tv_id}, Season {target_season}")
             return set(cached_result)
         
         # 获取剧集详情
@@ -119,13 +132,13 @@ class TMDBProvider:
         }
         
         try:
-            logger.info(f"获取TMDB剧集详情: TV ID {tv_id}")
+            logger.info(f"获取TMDB剧集详情: TV ID {tv_id}, 目标季 {target_season}")
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
             
-            # 获取所有季的集数
+            # 获取指定季的集数
             aired_episodes = set()
             seasons = data.get("seasons", [])
             
@@ -134,12 +147,23 @@ class TMDBProvider:
                 if season_number == 0:  # 跳过特别篇
                     continue
                 
-                episode_count = season.get("episode_count", 0)
-                # 添加该季的所有集数
-                for ep in range(1, episode_count + 1):
-                    aired_episodes.add(ep)
+                # 只获取目标季的集数
+                if season_number == target_season:
+                    episode_count = season.get("episode_count", 0)
+                    # 添加该季的所有集数
+                    for ep in range(1, episode_count + 1):
+                        aired_episodes.add(ep)
+                    logger.info(f"季 {target_season}: 共 {episode_count} 集已播出")
+                    break
             
-            logger.info(f"获取到 {len(aired_episodes)} 集已播出集数")
+            if not aired_episodes:
+                # 如果没找到目标季，记录警告并尝试获取所有季度信息
+                logger.warning(f"未找到季 {target_season} 的信息，可能是季数错误")
+                # 列出可用的季度
+                available_seasons = [s.get("season_number") for s in seasons if s.get("season_number", 0) > 0]
+                logger.info(f"可用季度: {available_seasons}")
+            
+            logger.info(f"获取到 {len(aired_episodes)} 集已播出集数 (季 {target_season})")
             
             # 缓存结果（转换为列表以便JSON序列化）
             cache_manager.set(cache_key, list(aired_episodes))
@@ -161,7 +185,10 @@ class LocalStateProvider:
         Args:
             base_dir: 本地存储基础目录，如果为空则从配置读取
         """
-        self.base_dir = base_dir or get_config_value("output.base_dir", "instance/output")
+        if not base_dir:
+            from config.config_loader import get_config_value
+            base_dir = get_config_value("output.base_dir", "instance/output")
+        self.base_dir = base_dir
         logger.info(f"本地状态提供者初始化完成: {self.base_dir}")
     
     def get_existing_episodes(self, title: str) -> Set[int]:
@@ -253,26 +280,96 @@ class StateProvider:
     """
     状态提供者
     整合TMDB和本地状态查询，提供带缓存的状态信息
+
+    支持两种初始化方式：
+    1. 传统方式：使用默认配置
+    2. 配置注入：传入TMDBConfig配置对象（推荐）
     """
-    
-    def __init__(self):
-        """初始化状态提供者"""
-        self.tmdb_provider = TMDBProvider()
+
+    def __init__(self, config: Optional[TMDBConfig] = None):
+        """
+        初始化状态提供者
+
+        Args:
+            config: 集中式配置对象（推荐使用config_service.get_tmdb_config()获取）
+        """
+        self.tmdb_provider = TMDBProvider(config=config)
         self.local_provider = LocalStateProvider()
         logger.info("状态提供者初始化完成")
     
-    def get_state_with_cache(self, title: str) -> SeriesState:
+    def _extract_season_from_title(self, title: str) -> int:
+        """
+        从标题中自动提取季数
+        
+        支持的格式：
+        - "剧名第二季" -> 2
+        - "剧名 S02" -> 2
+        - "剧名 Season 2" -> 2
+        - "剧名2" (结尾数字) -> 2
+        
+        Args:
+            title: 剧集标题
+            
+        Returns:
+            提取的季数，默认为1
+        """
+        import re
+        
+        # 中文数字映射
+        cn_numbers = {
+            '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+            '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+        }
+        
+        # 模式1: 第X季 (中文)
+        match = re.search(r'第([一二三四五六七八九十]+)季', title)
+        if match:
+            cn_num = match.group(1)
+            if cn_num in cn_numbers:
+                return cn_numbers[cn_num]
+        
+        # 模式2: 第N季 (数字)
+        match = re.search(r'第(\d+)季', title)
+        if match:
+            return int(match.group(1))
+        
+        # 模式3: S01, S02 等
+        match = re.search(r'[Ss](\d{1,2})', title)
+        if match:
+            return int(match.group(1))
+        
+        # 模式4: Season 1, Season 2 等
+        match = re.search(r'[Ss]eason\s*(\d+)', title, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        
+        # 模式5: 标题结尾的数字 (如 "庆余年2")
+        match = re.search(r'(\d+)$', title.strip())
+        if match:
+            num = int(match.group(1))
+            if 1 <= num <= 20:  # 合理的季数范围
+                return num
+        
+        # 默认返回第1季
+        return 1
+    
+    def get_state_with_cache(self, title: str, season: int = None) -> SeriesState:
         """
         获取剧集状态（带缓存）
         
         Args:
             title: 剧名
+            season: 季数，如果不传则从标题自动提取或默认为1
             
         Returns:
             剧集状态对象
         """
-        # 检查缓存
-        cache_key = f"series_state:{title}"
+        # 自动从标题提取季数
+        if season is None:
+            season = self._extract_season_from_title(title)
+        
+        # 检查缓存（包含季数）
+        cache_key = f"series_state:{title}:s{season}"
         cached_state = cache_manager.get(cache_key)
         
         if cached_state:
@@ -285,13 +382,13 @@ class StateProvider:
             
             # 检查缓存是否仍然有效（12小时）
             if state.is_cache_valid(ttl_seconds=43200):
-                logger.debug(f"剧集状态缓存有效: {title}")
+                logger.debug(f"剧集状态缓存有效: {title} (季 {season})")
                 return state
             else:
-                logger.debug(f"剧集状态缓存已过期: {title}")
+                logger.debug(f"剧集状态缓存已过期: {title} (季 {season})")
         
         # 缓存无效或不存在，重新查询
-        logger.info(f"查询剧集状态: {title}")
+        logger.info(f"查询剧集状态: {title} (季 {season})")
         
         # 查询TMDB已播出集数
         tmdb_aired = set()
@@ -299,7 +396,7 @@ class StateProvider:
         if tv_show:
             tv_id = tv_show.get("id")
             if tv_id:
-                tmdb_aired = self.tmdb_provider.get_aired_episodes(tv_id)
+                tmdb_aired = self.tmdb_provider.get_aired_episodes(tv_id, target_season=season)
         
         # 查询本地已存储集数
         local_existing = self.local_provider.get_existing_episodes(title)
@@ -345,11 +442,27 @@ class StateProvider:
         return self.get_state_with_cache(title)
 
 
-def create_state_provider() -> StateProvider:
+def create_state_provider(config: Optional[TMDBConfig] = None) -> StateProvider:
     """
     创建状态提供者实例的工厂函数
-    
+
+    Args:
+        config: TMDBConfig配置对象，如果不传则从全局配置加载
+
     Returns:
         配置好的状态提供者实例
     """
-    return StateProvider()
+    return StateProvider(config=config)
+
+
+def create_tmdb_provider(config: Optional[TMDBConfig] = None) -> TMDBProvider:
+    """
+    创建TMDB提供者实例的工厂函数
+
+    Args:
+        config: TMDBConfig配置对象，如果不传则从全局配置加载
+
+    Returns:
+        配置好的TMDB提供者实例
+    """
+    return TMDBProvider(config=config)

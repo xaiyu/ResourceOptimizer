@@ -14,7 +14,7 @@ from tenacity import Retrying, stop_after_attempt, wait_exponential, retry_if_ex
 import aiohttp
 
 from core.contracts import RawFileNode
-from config.config_loader import get_config_value
+from config.config_service import QuarkConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +23,33 @@ class QuarkCrawler:
     """
     夸克网盘爬虫
     处理链接解析、有效性检查和获取文件详情
+    
+    推荐使用 create_quark_crawler() 工厂函数创建实例
     """
     
-    def __init__(self, cookie: str = ""):
+    def __init__(self, cookie: str = "", config: Optional[QuarkConfig] = None):
         """
         初始化夸克爬虫
         
         Args:
-            cookie: 夸克网盘Cookie，如果为空则从配置读取
+            cookie: 夸克网盘Cookie（向后兼容参数）
+            config: 配置对象，推荐使用此参数
         """
-        # 获取配置
-        self.cookie = cookie or get_config_value("provider.quark_cookie", "")
-        self.base_url = get_config_value("provider.quark_base_url", "https://drive-pc.quark.cn")
-        self.base_url_app = get_config_value("provider.quark_base_url_app", "https://drive-m.quark.cn")
-        self.user_agent = get_config_value("provider.quark_user_agent", 
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/3.14.2 Chrome/112.0.5615.165 Electron/24.1.3.8 Safari/537.36 Channel/pckk_other_ch")
-        self.timeout = get_config_value("provider.quark_timeout", 30)
-        self.retry_count = get_config_value("provider.quark_retry_count", 3)
-        self.retry_delay = get_config_value("provider.quark_retry_delay", 1)
+        # 获取配置（如果未传入则从 config_service 加载）
+        if config is None:
+            from config.config_service import get_quark_config
+            config = get_quark_config()
+        
+        # 从配置对象读取所有配置
+        self.cookie = cookie or config.cookie
+        self.root_path = config.root_path
+        self.upload_parallel = config.upload_parallel
+        self.base_url = config.base_url
+        self.base_url_app = config.base_url_app
+        self.user_agent = config.user_agent
+        self.timeout = config.timeout
+        self.retry_count = config.retry_count
+        self.retry_delay = config.retry_delay
         
         # 提取移动端参数
         self.mparam = self._extract_mobile_params(self.cookie)
@@ -370,14 +379,18 @@ class QuarkCrawler:
         }
 
 
-def create_quark_crawler(cookie: str = "") -> QuarkCrawler:
+def create_quark_crawler(cookie: str = "", config: Optional[QuarkConfig] = None) -> QuarkCrawler:
     """
     创建夸克爬虫实例的工厂函数
     
     Args:
-        cookie: 夸克网盘Cookie
+        cookie: 夸克网盘Cookie（向后兼容）
+        config: QuarkConfig配置对象，如果不传则从全局配置加载
         
     Returns:
         配置好的夸克爬虫实例
     """
-    return QuarkCrawler(cookie)
+    if config is None:
+        from config.config_service import get_quark_config
+        config = get_quark_config()
+    return QuarkCrawler(cookie=cookie, config=config)

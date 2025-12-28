@@ -14,7 +14,7 @@ import aiohttp
 from tenacity import Retrying, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.contracts import RawFileNode, VideoMeta
-from config.config_loader import get_config_value
+from config.config_service import LLMConfig, get_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -23,37 +23,55 @@ class LLMClient:
     """
     LLM客户端
     使用SiliconFlow API进行智能视频元数据解析
+
+    支持两种初始化方式：
+    1. 传统方式：直接传入参数
+    2. 配置注入：传入LLMConfig配置对象（推荐）
     """
-    
-    def __init__(self, api_key: str = "", model: str = "", max_concurrency: int = 4):
+
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = "",
+        max_concurrency: int = 4,
+        config: Optional[LLMConfig] = None
+    ):
         """
         初始化LLM客户端
-        
+
         Args:
-            api_key: SiliconFlow API密钥，如果为空则从配置读取
-            model: 模型名称，如果为空则从配置读取
-            max_concurrency: 最大并发数
+            api_key: SiliconFlow API密钥（优先级高于config）
+            model: 模型名称（优先级高于config）
+            max_concurrency: 最大并发数（优先级高于config）
+            config: 集中式配置对象（推荐使用config_service.get_llm_config()获取）
         """
-        # 获取配置
-        self.api_key = api_key or get_config_value("provider.silicon_api_key", "")
-        self.base_url = get_config_value("provider.silicon_base_url", "https://api.siliconflow.cn/v1")
-        self.model = model or get_config_value("provider.silicon_model", "Qwen/Qwen3-8B-Instruct")
-        self.max_concurrency = max_concurrency
-        self.timeout = get_config_value("provider.silicon_timeout", 30)
-        self.retry_count = get_config_value("provider.silicon_retry_count", 3)
-        
-        # 并发控制
+        if config is not None:
+            self.api_key = api_key or config.api_key
+            self.base_url = config.base_url
+            self.model = model or config.model
+            self.max_concurrency = max_concurrency or config.max_concurrency
+            self.timeout = config.timeout
+            self.retry_count = config.retry_count
+            self.circuit_breaker_threshold = config.circuit_breaker_threshold
+        else:
+            # 使用 config_service 获取默认配置
+            default_config = get_llm_config()
+            self.api_key = api_key or default_config.api_key
+            self.base_url = default_config.base_url
+            self.model = model or default_config.model
+            self.max_concurrency = max_concurrency or default_config.max_concurrency
+            self.timeout = default_config.timeout
+            self.retry_count = default_config.retry_count
+            self.circuit_breaker_threshold = default_config.circuit_breaker_threshold
+
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
-        
-        # 熔断器状态
-        self.circuit_breaker_threshold = get_config_value("app.circuit_breaker_threshold", 10)
+
         self.failure_count = 0
         self.last_failure_time = 0
         self.circuit_open = False
-        
-        # 官方标题基准（用于提示词增强）
+
         self._current_standard_title = None
-        
+
         if not self.api_key:
             logger.warning("SiliconFlow API密钥未配置，LLM解析功能将不可用")
         else:
@@ -501,13 +519,28 @@ class LLMClient:
 def create_llm_client(api_key: str = "", model: str = "", max_concurrency: int = 4) -> LLMClient:
     """
     创建LLM客户端实例的工厂函数
-    
+
     Args:
         api_key: API密钥
         model: 模型名称
         max_concurrency: 最大并发数
-        
+
     Returns:
         配置好的LLM客户端实例
     """
     return LLMClient(api_key, model, max_concurrency)
+
+
+def create_llm_client_with_config(config: Optional[LLMConfig] = None) -> LLMClient:
+    """
+    创建LLM客户端实例的工厂函数（使用集中式配置）
+
+    Args:
+        config: LLMConfig配置对象，如果不传则从全局配置加载
+
+    Returns:
+        配置好的LLM客户端实例
+    """
+    if config is None:
+        config = get_llm_config()
+    return LLMClient(config=config)

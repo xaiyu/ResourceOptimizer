@@ -102,6 +102,15 @@ class RankedSource:
     url: str                  # 源链接
     score: int                # 评分
     rank: int                 # 排名 (1-based)
+    
+    def __post_init__(self):
+        """数据完整性验证"""
+        if not self.title:
+            raise ValueError("title 不能为空")
+        if not self.url:
+            raise ValueError("url 不能为空")
+        if self.rank < 1:
+            raise ValueError("rank 必须大于等于 1")
 
 
 @dataclass
@@ -118,6 +127,15 @@ class SelectedFile:
     target_filename: Optional[str] = None  # 标准化目标文件名
     rename_metadata: Optional[Dict[str, Any]] = None  # 重命名元数据
     consistency_score: Optional[float] = None  # 一致性评分 (0.0-1.0)
+    
+    def __post_init__(self):
+        """数据完整性验证"""
+        if not isinstance(self.file_node, RawFileNode):
+            raise ValueError("file_node 必须是 RawFileNode 类型")
+        if not isinstance(self.video_meta, VideoMeta):
+            raise ValueError("video_meta 必须是 VideoMeta 类型")
+        if self.consistency_score is not None and not (0.0 <= self.consistency_score <= 1.0):
+            raise ValueError("consistency_score 必须在 0.0-1.0 之间")
 
 
 @dataclass
@@ -130,6 +148,19 @@ class SaveResult:
     failed_count: int         # 失败转存数
     failed_files: List[str] = field(default_factory=list)  # 失败文件列表
     execution_time: float = 0.0  # 执行时间(秒)
+    
+    def __post_init__(self):
+        """数据完整性验证"""
+        if self.total_files < 0:
+            raise ValueError("total_files 不能为负数")
+        if self.success_count < 0:
+            raise ValueError("success_count 不能为负数")
+        if self.failed_count < 0:
+            raise ValueError("failed_count 不能为负数")
+        if self.success_count + self.failed_count > self.total_files:
+            raise ValueError("成功+失败数不能超过总数")
+        if self.execution_time < 0:
+            raise ValueError("execution_time 不能为负数")
     
     @property
     def success_rate(self) -> float:
@@ -148,6 +179,15 @@ class CacheEntry:
     data: Any                 # 缓存数据
     timestamp: float          # 创建时间戳
     ttl: int                  # 生存时间(秒)
+    
+    def __post_init__(self):
+        """数据完整性验证"""
+        if not self.key:
+            raise ValueError("key 不能为空")
+        if self.timestamp < 0:
+            raise ValueError("timestamp 不能为负数")
+        if self.ttl <= 0:
+            raise ValueError("ttl 必须大于 0")
     
     def is_expired(self) -> bool:
         """检查是否过期"""
@@ -181,22 +221,28 @@ class DynamicFunnelConfig:
 class ConsistencyConfig:
     """
     [v4.1] 一致性检查配置
+    管理文件一致性验证的参数
+
+    推荐使用 config_service.get_consistency_config() 获取配置实例
     """
-    enable: bool = True              # 是否启用一致性检查
-    size_deviation: float = 0.5      # 允许的大小偏差 (0.5 = 50%)
-    min_samples: int = 3             # 最小样本数
+    enable: bool = True
+    size_deviation: float = 0.5
+    min_samples: int = 3
 
 
 @dataclass
 class NamingConfig:
     """
     [v4.1] 标准化命名配置
+    提供质量标签映射和命名模板的集中管理
+
+    推荐使用 config_service.get_naming_config() 获取配置实例
     """
-    enable: bool = True              # 是否启用标准化命名
+    enable: bool = True
     format_template: str = "{title} S{season:02d}E{episode:02d} [{quality}].{ext}"
     quality_tags: Dict[str, str] = field(default_factory=lambda: {
         "2160p": "4K",
-        "1080p": "1080p", 
+        "1080p": "1080p",
         "hdr": "HDR",
         "atmos": "Atmos"
     })
@@ -211,6 +257,15 @@ class SeriesInfo:
     season: int                      # 季数
     total_episodes: int = 0          # 总集数
     tmdb_id: Optional[int] = None    # TMDB ID
+    
+    def __post_init__(self):
+        """数据完整性验证"""
+        if not self.title:
+            raise ValueError("title 不能为空")
+        if self.season < 1:
+            raise ValueError("season 必须大于等于 1")
+        if self.total_episodes < 0:
+            raise ValueError("total_episodes 不能为负数")
 
 
 # ============================================================================
