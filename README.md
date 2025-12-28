@@ -1,6 +1,6 @@
 # 智能媒体资源治理系统 v4.1
 
-基于Pipeline + Map-Reduce + Context Injection架构的智能媒体资源治理系统，专为夸克网盘资源的智能筛选、质量评估和批量转存而设计。
+本项目为AI基于Pipeline + Map-Reduce + Context Injection架构的智能媒体资源治理系统，专为夸克网盘资源的智能筛选、质量评估和批量转存而设计。
 
 ## 🎯 v4.1 核心优化
 
